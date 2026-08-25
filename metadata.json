@@ -1,0 +1,6 @@
+{
+  "name": "Gestão Financeira Familiar",
+  "description": "Sistema completo de gestão financeira familiar: separação por responsável (Ricardo e Ellen), Reserva de Emergência de 8 meses (R$ 55.200), Fundo da Nova Casa com 3 cenários, Reforma da casa com crédito a compensar no aluguel (Jan/2027), Fechamento Mensal com checklist, Central de Alertas, sincronização direta com Google Sheets & Drive e exportação completa em Excel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
