@@ -515,3 +515,5 @@ export type ActiveTab =
   | 'closing'
   | 'alerts'
   | 'settings';
+
+export type AutoSaveStatus = 'saved' | 'saving' | 'synced_cloud' | 'error';

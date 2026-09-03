@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef, ReactNode } from 'react';
 import {
   ActiveTab,
+  AutoSaveStatus,
   CardSubscription,
   CestaBasicaRecord,
   Cofrinho,
@@ -56,6 +57,7 @@ import { calculateMonthlyYieldDetails, calculateAnnualRate } from '../utils/yiel
 import { exportFullWorkbookExcel } from '../utils/excelExport';
 import { generateSmartShoppingListFromStock } from '../utils/stockReplenishment';
 import { createCarrefourMasterShoppingList } from '../data/carrefourMasterList';
+import { isSupabaseConfigured, pushLocalDataToSupabase } from '../services/supabase';
 
 export interface CardInvoiceSummary {
   card: CreditCard;
@@ -260,6 +262,11 @@ interface FinanceContextType {
   toggleTheme: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
 
+  // Auto-save & Cloud Sync status
+  saveStatus: AutoSaveStatus;
+  lastSavedTime: string | null;
+  forceSaveNow: () => void;
+
   // Export & Import
   exportBackupJSON: () => void;
   importBackupJSON: (jsonString: string) => boolean;
@@ -268,7 +275,7 @@ interface FinanceContextType {
   exportExcelFull: () => void;
 }
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   THEME: 'fin_family_theme',
   TRANSACTIONS: 'fin_family_transactions_v2',
   CARDS: 'fin_family_cards_v2',
@@ -278,6 +285,7 @@ const STORAGE_KEYS = {
   INSTALLMENTS: 'fin_family_installments_v2',
   GROCERY: 'fin_family_grocery_v2',
   GROCERY_PLAN: 'fin_family_grocery_plan_v2',
+  GROCERY_PLANS_BY_MONTH: 'fin_family_grocery_plans_by_month_v2',
   SHOPPING_LISTS: 'fin_family_shopping_lists_v2',
   STOCK_ITEMS: 'fin_family_stock_items_v2',
   CESTA_BASICA: 'fin_family_cesta_basica_v2',
@@ -293,12 +301,50 @@ const STORAGE_KEYS = {
   DISMISSED_ALERTS: 'fin_family_dismissed_alerts_v2',
   SELECTED_MONTH: 'fin_family_selected_month_v2',
   CUSTOM_CATEGORIES: 'fin_family_custom_categories_v2',
+  ACTIVE_TAB: 'fin_family_active_tab_v2',
+};
+
+export const safeStorageSet = (key: string, value: any) => {
+  try {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+    localStorage.setItem(key, serialized);
+  } catch (err) {
+    console.error(`Erro ao salvar automaticamente no localStorage (${key}):`, err);
+  }
 };
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
 export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [activeTab, setActiveTabState] = useState<ActiveTab>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.ACTIVE_TAB) as ActiveTab;
+      if (
+        saved &&
+        [
+          'dashboard',
+          'transactions',
+          'cards',
+          'grocery',
+          'budget',
+          'goals',
+          'house',
+          'renovation',
+          'closing',
+          'alerts',
+          'settings',
+        ].includes(saved)
+      ) {
+        return saved;
+      }
+    } catch {}
+    return 'dashboard';
+  });
+
+  const setActiveTab = useCallback((tab: ActiveTab) => {
+    setActiveTabState(tab);
+    safeStorageSet(STORAGE_KEYS.ACTIVE_TAB, tab);
+  }, []);
 
   const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
     try {
@@ -334,10 +380,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const isDarkMode = theme === 'dark';
 
-  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+  const [selectedMonth, setSelectedMonthState] = useState<string>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SELECTED_MONTH);
     return saved || '2026-08';
   });
+
+  const setSelectedMonth = useCallback((month: string) => {
+    setSelectedMonthState(month);
+    safeStorageSet(STORAGE_KEYS.SELECTED_MONTH, month);
+  }, []);
 
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
@@ -415,22 +466,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (!saved) return INITIAL_COFRINHOS;
     try {
       const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed)) {
-        // Filtrar apenas os 3 cofrinhos autorizados e remover os antigos demo
-        const filtered = parsed.filter(
-          (c) =>
-            c.id === 'cof-reserva' ||
-            c.id === 'cof-casa' ||
-            c.id === 'cof-lazer'
-        );
-        const existingIds = new Set(filtered.map((c) => c.id));
-        const merged = [...filtered];
-        INITIAL_COFRINHOS.forEach((initCof) => {
-          if (!existingIds.has(initCof.id)) {
-            merged.push(initCof);
-          }
-        });
-        return merged.length > 0 ? merged : INITIAL_COFRINHOS;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
       }
     } catch (e) {
       console.error(e);
@@ -444,14 +481,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     try {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed)) {
-        // Filtrar apenas movimentos pertencentes aos 3 cofrinhos autorizados
-        const filtered = parsed.filter(
-          (m) =>
-            m.cofrinhoId === 'cof-reserva' ||
-            m.cofrinhoId === 'cof-casa' ||
-            m.cofrinhoId === 'cof-lazer'
-        );
-        return filtered.length > 0 ? filtered : INITIAL_COFRINHO_MOVEMENTS;
+        return parsed;
       }
     } catch (e) {
       console.error(e);
@@ -520,9 +550,41 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return saved ? JSON.parse(saved) : INITIAL_GROCERY_TRIPS;
   });
 
+  const [groceryPlansByMonth, setGroceryPlansByMonth] = useState<Record<string, GroceryMonthPlan>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.GROCERY_PLANS_BY_MONTH);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed === 'object' && parsed !== null) return parsed;
+      }
+    } catch {}
+    const single = localStorage.getItem(STORAGE_KEYS.GROCERY_PLAN);
+    if (single) {
+      try {
+        const parsedSingle = JSON.parse(single);
+        if (parsedSingle?.monthKey) {
+          return { [parsedSingle.monthKey]: parsedSingle };
+        }
+      } catch {}
+    }
+    return { '2026-08': INITIAL_GROCERY_PLAN };
+  });
+
   const [groceryPlan, setGroceryPlan] = useState<GroceryMonthPlan>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.GROCERY_PLAN);
-    return saved ? JSON.parse(saved) : INITIAL_GROCERY_PLAN;
+    const savedMonth = localStorage.getItem(STORAGE_KEYS.SELECTED_MONTH) || '2026-08';
+    try {
+      const savedMap = localStorage.getItem(STORAGE_KEYS.GROCERY_PLANS_BY_MONTH);
+      if (savedMap) {
+        const parsedMap = JSON.parse(savedMap);
+        if (parsedMap[savedMonth]) return parsedMap[savedMonth];
+      }
+      const single = localStorage.getItem(STORAGE_KEYS.GROCERY_PLAN);
+      if (single) {
+        const parsed = JSON.parse(single);
+        if (parsed?.monthKey === savedMonth) return parsed;
+      }
+    } catch {}
+    return INITIAL_GROCERY_PLAN;
   });
 
   const [shoppingLists, setShoppingLists] = useState<ShoppingList[]>(() => {
@@ -600,139 +662,374 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const [groceryMonthlyGoal, setGroceryMonthlyGoal] = useState<number>(1000);
 
-  // Save to localStorage
+  // Auto-save & cloud sync state
+  const [saveStatus, setSaveStatus] = useState<AutoSaveStatus>('saved');
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(() => {
+    return new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  });
+
+  const notifySaved = useCallback((isCloud = false) => {
+    setSaveStatus(isCloud ? 'synced_cloud' : 'saved');
+    setLastSavedTime(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  }, []);
+
+  // Refs to guarantee 100% synchronous data flushing before unload
+  const activeTabRef = useRef(activeTab);
+  const selectedMonthRef = useRef(selectedMonth);
+  const transactionsRef = useRef(transactions);
+  const cardsRef = useRef(cards);
+  const cardSubscriptionsRef = useRef(cardSubscriptions);
+  const cofrinhosRef = useRef(cofrinhos);
+  const cofrinhoMovementsRef = useRef(cofrinhoMovements);
+  const installmentPurchasesRef = useRef(installmentPurchases);
+  const groceryTripsRef = useRef(groceryTrips);
+  const groceryPlanRef = useRef(groceryPlan);
+  const groceryPlansByMonthRef = useRef(groceryPlansByMonth);
+  const shoppingListsRef = useRef(shoppingLists);
+  const stockItemsRef = useRef(stockItems);
+  const cestaBasicaRecordsRef = useRef(cestaBasicaRecords);
+  const salarySettingsRef = useRef(salarySettings);
+  const investmentContributionsRef = useRef(investmentContributions);
+  const emergencyContributionsRef = useRef(emergencyContributions);
+  const emergencySettingsRef = useRef(emergencySettings);
+  const globalCofrinhoSettingsRef = useRef(globalCofrinhoSettings);
+  const houseFundSettingsRef = useRef(houseFundSettings);
+  const renovationExpensesRef = useRef(renovationExpenses);
+  const futureRentSettingsRef = useRef(futureRentSettings);
+  const closingChecklistsRef = useRef(closingChecklists);
+  const dismissedAlertIdsRef = useRef(dismissedAlertIds);
+  const customCategoriesRef = useRef(customCategories);
+
+  // Keep refs in sync
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => { selectedMonthRef.current = selectedMonth; }, [selectedMonth]);
+  useEffect(() => { transactionsRef.current = transactions; }, [transactions]);
+  useEffect(() => { cardsRef.current = cards; }, [cards]);
+  useEffect(() => { cardSubscriptionsRef.current = cardSubscriptions; }, [cardSubscriptions]);
+  useEffect(() => { cofrinhosRef.current = cofrinhos; }, [cofrinhos]);
+  useEffect(() => { cofrinhoMovementsRef.current = cofrinhoMovements; }, [cofrinhoMovements]);
+  useEffect(() => { installmentPurchasesRef.current = installmentPurchases; }, [installmentPurchases]);
+  useEffect(() => { groceryTripsRef.current = groceryTrips; }, [groceryTrips]);
+  useEffect(() => { groceryPlanRef.current = groceryPlan; }, [groceryPlan]);
+  useEffect(() => { groceryPlansByMonthRef.current = groceryPlansByMonth; }, [groceryPlansByMonth]);
+  useEffect(() => { shoppingListsRef.current = shoppingLists; }, [shoppingLists]);
+  useEffect(() => { stockItemsRef.current = stockItems; }, [stockItems]);
+  useEffect(() => { cestaBasicaRecordsRef.current = cestaBasicaRecords; }, [cestaBasicaRecords]);
+  useEffect(() => { salarySettingsRef.current = salarySettings; }, [salarySettings]);
+  useEffect(() => { investmentContributionsRef.current = investmentContributions; }, [investmentContributions]);
+  useEffect(() => { emergencyContributionsRef.current = emergencyContributions; }, [emergencyContributions]);
+  useEffect(() => { emergencySettingsRef.current = emergencySettings; }, [emergencySettings]);
+  useEffect(() => { globalCofrinhoSettingsRef.current = globalCofrinhoSettings; }, [globalCofrinhoSettings]);
+  useEffect(() => { houseFundSettingsRef.current = houseFundSettings; }, [houseFundSettings]);
+  useEffect(() => { renovationExpensesRef.current = renovationExpenses; }, [renovationExpenses]);
+  useEffect(() => { futureRentSettingsRef.current = futureRentSettings; }, [futureRentSettings]);
+  useEffect(() => { closingChecklistsRef.current = closingChecklists; }, [closingChecklists]);
+  useEffect(() => { dismissedAlertIdsRef.current = dismissedAlertIds; }, [dismissedAlertIds]);
+  useEffect(() => { customCategoriesRef.current = customCategories; }, [customCategories]);
+
+  // Synchronous flush before page unload or reload
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.SELECTED_MONTH, selectedMonth);
+    const handleBeforeUnload = () => {
+      safeStorageSet(STORAGE_KEYS.ACTIVE_TAB, activeTabRef.current);
+      safeStorageSet(STORAGE_KEYS.SELECTED_MONTH, selectedMonthRef.current);
+      safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+      safeStorageSet(STORAGE_KEYS.CARDS, cardsRef.current);
+      safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, cardSubscriptionsRef.current);
+      safeStorageSet(STORAGE_KEYS.COFRINHOS, cofrinhosRef.current);
+      safeStorageSet(STORAGE_KEYS.COFRINHO_MOVEMENTS, cofrinhoMovementsRef.current);
+      safeStorageSet(STORAGE_KEYS.INSTALLMENTS, installmentPurchasesRef.current);
+      safeStorageSet(STORAGE_KEYS.GROCERY, groceryTripsRef.current);
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, groceryPlanRef.current);
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLANS_BY_MONTH, groceryPlansByMonthRef.current);
+      safeStorageSet(STORAGE_KEYS.SHOPPING_LISTS, shoppingListsRef.current);
+      safeStorageSet(STORAGE_KEYS.STOCK_ITEMS, stockItemsRef.current);
+      safeStorageSet(STORAGE_KEYS.CESTA_BASICA, cestaBasicaRecordsRef.current);
+      safeStorageSet(STORAGE_KEYS.SALARY_SETTINGS, salarySettingsRef.current);
+      safeStorageSet(STORAGE_KEYS.INVESTMENTS, investmentContributionsRef.current);
+      safeStorageSet(STORAGE_KEYS.EMERGENCY, emergencyContributionsRef.current);
+      safeStorageSet(STORAGE_KEYS.EMERGENCY_SETTINGS, emergencySettingsRef.current);
+      safeStorageSet(STORAGE_KEYS.GLOBAL_COFRINHO_SETTINGS, globalCofrinhoSettingsRef.current);
+      safeStorageSet(STORAGE_KEYS.HOUSE_FUND_SETTINGS, houseFundSettingsRef.current);
+      safeStorageSet(STORAGE_KEYS.RENOVATION_EXPENSES, renovationExpensesRef.current);
+      safeStorageSet(STORAGE_KEYS.FUTURE_RENT_SETTINGS, futureRentSettingsRef.current);
+      safeStorageSet(STORAGE_KEYS.CLOSING_CHECKLISTS, closingChecklistsRef.current);
+      safeStorageSet(STORAGE_KEYS.DISMISSED_ALERTS, dismissedAlertIdsRef.current);
+      safeStorageSet(STORAGE_KEYS.CUSTOM_CATEGORIES, customCategoriesRef.current);
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
+  const forceSaveNow = useCallback(() => {
+    setSaveStatus('saving');
+    safeStorageSet(STORAGE_KEYS.ACTIVE_TAB, activeTabRef.current);
+    safeStorageSet(STORAGE_KEYS.SELECTED_MONTH, selectedMonthRef.current);
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+    safeStorageSet(STORAGE_KEYS.CARDS, cardsRef.current);
+    safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, cardSubscriptionsRef.current);
+    safeStorageSet(STORAGE_KEYS.COFRINHOS, cofrinhosRef.current);
+    safeStorageSet(STORAGE_KEYS.COFRINHO_MOVEMENTS, cofrinhoMovementsRef.current);
+    safeStorageSet(STORAGE_KEYS.INSTALLMENTS, installmentPurchasesRef.current);
+    safeStorageSet(STORAGE_KEYS.GROCERY, groceryTripsRef.current);
+    safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, groceryPlanRef.current);
+    safeStorageSet(STORAGE_KEYS.GROCERY_PLANS_BY_MONTH, groceryPlansByMonthRef.current);
+    safeStorageSet(STORAGE_KEYS.SHOPPING_LISTS, shoppingListsRef.current);
+    safeStorageSet(STORAGE_KEYS.STOCK_ITEMS, stockItemsRef.current);
+    safeStorageSet(STORAGE_KEYS.CESTA_BASICA, cestaBasicaRecordsRef.current);
+    safeStorageSet(STORAGE_KEYS.SALARY_SETTINGS, salarySettingsRef.current);
+    safeStorageSet(STORAGE_KEYS.INVESTMENTS, investmentContributionsRef.current);
+    safeStorageSet(STORAGE_KEYS.EMERGENCY, emergencyContributionsRef.current);
+    safeStorageSet(STORAGE_KEYS.EMERGENCY_SETTINGS, emergencySettingsRef.current);
+    safeStorageSet(STORAGE_KEYS.GLOBAL_COFRINHO_SETTINGS, globalCofrinhoSettingsRef.current);
+    safeStorageSet(STORAGE_KEYS.HOUSE_FUND_SETTINGS, houseFundSettingsRef.current);
+    safeStorageSet(STORAGE_KEYS.RENOVATION_EXPENSES, renovationExpensesRef.current);
+    safeStorageSet(STORAGE_KEYS.FUTURE_RENT_SETTINGS, futureRentSettingsRef.current);
+    safeStorageSet(STORAGE_KEYS.CLOSING_CHECKLISTS, closingChecklistsRef.current);
+    safeStorageSet(STORAGE_KEYS.DISMISSED_ALERTS, dismissedAlertIdsRef.current);
+    safeStorageSet(STORAGE_KEYS.CUSTOM_CATEGORIES, customCategoriesRef.current);
+
+    notifySaved(isSupabaseConfigured());
+  }, [notifySaved]);
+
+  // Save to localStorage whenever state changes
+  useEffect(() => {
+    safeStorageSet(STORAGE_KEYS.SELECTED_MONTH, selectedMonth);
   }, [selectedMonth]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(transactions));
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactions);
   }, [transactions]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CARDS, JSON.stringify(cards));
+    safeStorageSet(STORAGE_KEYS.CARDS, cards);
   }, [cards]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CARD_SUBSCRIPTIONS, JSON.stringify(cardSubscriptions));
+    safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, cardSubscriptions);
   }, [cardSubscriptions]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.COFRINHOS, JSON.stringify(cofrinhos));
+    safeStorageSet(STORAGE_KEYS.COFRINHOS, cofrinhos);
   }, [cofrinhos]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.COFRINHO_MOVEMENTS, JSON.stringify(cofrinhoMovements));
+    safeStorageSet(STORAGE_KEYS.COFRINHO_MOVEMENTS, cofrinhoMovements);
   }, [cofrinhoMovements]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.INSTALLMENTS, JSON.stringify(installmentPurchases));
+    safeStorageSet(STORAGE_KEYS.INSTALLMENTS, installmentPurchases);
   }, [installmentPurchases]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.GROCERY, JSON.stringify(groceryTrips));
+    safeStorageSet(STORAGE_KEYS.GROCERY, groceryTrips);
   }, [groceryTrips]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.GROCERY_PLAN, JSON.stringify(groceryPlan));
+    safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, groceryPlan);
+    if (groceryPlan.monthKey) {
+      setGroceryPlansByMonth((prev) => {
+        const updated = { ...prev, [groceryPlan.monthKey]: groceryPlan };
+        safeStorageSet(STORAGE_KEYS.GROCERY_PLANS_BY_MONTH, updated);
+        return updated;
+      });
+    }
   }, [groceryPlan]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.SHOPPING_LISTS, JSON.stringify(shoppingLists));
+    safeStorageSet(STORAGE_KEYS.SHOPPING_LISTS, shoppingLists);
   }, [shoppingLists]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.STOCK_ITEMS, JSON.stringify(stockItems));
+    safeStorageSet(STORAGE_KEYS.STOCK_ITEMS, stockItems);
   }, [stockItems]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CESTA_BASICA, JSON.stringify(cestaBasicaRecords));
+    safeStorageSet(STORAGE_KEYS.CESTA_BASICA, cestaBasicaRecords);
   }, [cestaBasicaRecords]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.SALARY_SETTINGS, JSON.stringify(salarySettings));
+    safeStorageSet(STORAGE_KEYS.SALARY_SETTINGS, salarySettings);
   }, [salarySettings]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.INVESTMENTS, JSON.stringify(investmentContributions));
+    safeStorageSet(STORAGE_KEYS.INVESTMENTS, investmentContributions);
   }, [investmentContributions]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.EMERGENCY, JSON.stringify(emergencyContributions));
+    safeStorageSet(STORAGE_KEYS.EMERGENCY, emergencyContributions);
   }, [emergencyContributions]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.EMERGENCY_SETTINGS, JSON.stringify(emergencySettings));
+    safeStorageSet(STORAGE_KEYS.EMERGENCY_SETTINGS, emergencySettings);
   }, [emergencySettings]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.GLOBAL_COFRINHO_SETTINGS, JSON.stringify(globalCofrinhoSettings));
+    safeStorageSet(STORAGE_KEYS.GLOBAL_COFRINHO_SETTINGS, globalCofrinhoSettings);
   }, [globalCofrinhoSettings]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.HOUSE_FUND_SETTINGS, JSON.stringify(houseFundSettings));
+    safeStorageSet(STORAGE_KEYS.HOUSE_FUND_SETTINGS, houseFundSettings);
   }, [houseFundSettings]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.RENOVATION_EXPENSES, JSON.stringify(renovationExpenses));
+    safeStorageSet(STORAGE_KEYS.RENOVATION_EXPENSES, renovationExpenses);
   }, [renovationExpenses]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.FUTURE_RENT_SETTINGS, JSON.stringify(futureRentSettings));
+    safeStorageSet(STORAGE_KEYS.FUTURE_RENT_SETTINGS, futureRentSettings);
   }, [futureRentSettings]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CLOSING_CHECKLISTS, JSON.stringify(closingChecklists));
+    safeStorageSet(STORAGE_KEYS.CLOSING_CHECKLISTS, closingChecklists);
   }, [closingChecklists]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DISMISSED_ALERTS, JSON.stringify(dismissedAlertIds));
+    safeStorageSet(STORAGE_KEYS.DISMISSED_ALERTS, dismissedAlertIds);
   }, [dismissedAlertIds]);
 
-  // Adjust grocery plan whenever selectedMonth changes if not configured
+  useEffect(() => {
+    safeStorageSet(STORAGE_KEYS.CUSTOM_CATEGORIES, customCategories);
+  }, [customCategories]);
+
+  // Adjust grocery plan whenever selectedMonth changes
   useEffect(() => {
     const weeksCount = getWeeksInMonth(selectedMonth);
-    setGroceryPlan((prev) => {
-      if (prev.monthKey === selectedMonth && prev.ricardoWeeks.length === weeksCount && prev.ellenWeeks?.length === weeksCount) {
-        return prev;
+    const existingPlan = groceryPlansByMonth[selectedMonth];
+    if (existingPlan) {
+      if (groceryPlan.monthKey !== selectedMonth) {
+        setGroceryPlan(existingPlan);
       }
-      const isOptionB = prev.mode === 'opcao_b';
-      const weeklyAmount = isOptionB && weeksCount === 5 ? 120 : 150;
-      const ellenWeeklyAmount = Math.round((prev.ellenMonthlyPlanned || 400) / weeksCount);
-      
-      const weeks = Array.from({ length: weeksCount }, (_, idx) => ({
-        weekIndex: idx + 1,
-        weekLabel: `Semana ${idx + 1}`,
-        plannedAmount: weeklyAmount,
-        actualAmount: weeklyAmount,
-        completed: idx < 3,
-      }));
+      return;
+    }
 
-      const ellenWeeks = Array.from({ length: weeksCount }, (_, idx) => ({
-        weekIndex: idx + 1,
-        weekLabel: `Semana ${idx + 1}`,
-        plannedAmount: ellenWeeklyAmount,
-        actualAmount: ellenWeeklyAmount,
-        completed: idx < 3,
-      }));
+    const isOptionB = groceryPlan.mode === 'opcao_b';
+    const weeklyAmount = isOptionB && weeksCount === 5 ? 120 : 150;
+    const ellenWeeklyAmount = Math.round((groceryPlan.ellenMonthlyPlanned || 400) / weeksCount);
 
-      return {
-        monthKey: selectedMonth,
-        mode: prev.mode || 'opcao_a',
-        totalWeeks: weeksCount,
-        ricardoWeeklyPlanned: weeklyAmount,
-        ricardoWeeks: weeks,
-        ellenPlanningType: prev.ellenPlanningType || 'semanal',
-        ellenMonthlyPlanned: prev.ellenMonthlyPlanned || 400,
-        ellenWeeklyPlanned: ellenWeeklyAmount,
-        ellenActualAmount: prev.ellenActualAmount || 400,
-        ellenCompleted: true,
-        ellenWeeks: ellenWeeks,
-        carryOverEnabled: prev.carryOverEnabled ?? true,
-        ellenCarryOverEnabled: prev.ellenCarryOverEnabled ?? true,
-      };
+    const weeks = Array.from({ length: weeksCount }, (_, idx) => ({
+      weekIndex: idx + 1,
+      weekLabel: `Semana ${idx + 1}`,
+      plannedAmount: weeklyAmount,
+      actualAmount: weeklyAmount,
+      completed: false,
+    }));
+
+    const ellenWeeks = Array.from({ length: weeksCount }, (_, idx) => ({
+      weekIndex: idx + 1,
+      weekLabel: `Semana ${idx + 1}`,
+      plannedAmount: ellenWeeklyAmount,
+      actualAmount: ellenWeeklyAmount,
+      completed: false,
+    }));
+
+    const newMonthPlan: GroceryMonthPlan = {
+      monthKey: selectedMonth,
+      mode: groceryPlan.mode || 'opcao_a',
+      totalWeeks: weeksCount,
+      ricardoTotalPlanned: weeklyAmount * weeksCount,
+      ricardoWeeklyPlanned: weeklyAmount,
+      ricardoWeeks: weeks,
+      ellenPlanningType: groceryPlan.ellenPlanningType || 'semanal',
+      ellenMonthlyPlanned: groceryPlan.ellenMonthlyPlanned || 400,
+      ellenWeeklyPlanned: ellenWeeklyAmount,
+      ellenActualAmount: 0,
+      ellenCompleted: false,
+      ellenWeeks,
+      carryOverEnabled: groceryPlan.carryOverEnabled ?? true,
+      ellenCarryOverEnabled: groceryPlan.ellenCarryOverEnabled ?? true,
+    };
+
+    setGroceryPlan(newMonthPlan);
+    setGroceryPlansByMonth((prev) => {
+      const updated = { ...prev, [selectedMonth]: newMonthPlan };
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLANS_BY_MONTH, updated);
+      return updated;
     });
   }, [selectedMonth]);
+
+  // Automatic Background Cloud Sync to Supabase (if configured)
+  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    // Notify local save immediately
+    notifySaved(false);
+
+    if (!isSupabaseConfigured()) {
+      return;
+    }
+
+    setSaveStatus('saving');
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+
+    syncTimeoutRef.current = setTimeout(async () => {
+      try {
+        const checklistsMap: Record<string, any> = {};
+        closingChecklists.forEach((c) => {
+          checklistsMap[c.monthKey] = c;
+        });
+
+        const allPlans = Object.values(groceryPlansByMonth);
+        const res = await pushLocalDataToSupabase({
+          cards,
+          transactions,
+          installmentPurchases,
+          cardSubscriptions,
+          groceryTrips,
+          groceryMonthPlans: allPlans.length > 0 ? allPlans : [groceryPlan],
+          shoppingLists,
+          stockItems,
+          cestaBasicaRecords,
+          cofrinhos,
+          cofrinhoMovements,
+          emergencyContributions,
+          investmentContributions,
+          renovationExpenses,
+          monthlyClosingChecklists: checklistsMap,
+          salarySettings,
+          emergencySettings,
+          houseFundSettings,
+          futureRentSettings,
+          globalCofrinhoSettings,
+        });
+
+        if (res.success) {
+          notifySaved(true);
+        } else {
+          notifySaved(false);
+        }
+      } catch (e) {
+        console.warn('Auto-sync Supabase skipped:', e);
+        notifySaved(false);
+      }
+    }, 2000);
+
+    return () => {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    };
+  }, [
+    transactions,
+    cards,
+    cardSubscriptions,
+    cofrinhos,
+    cofrinhoMovements,
+    installmentPurchases,
+    groceryTrips,
+    groceryPlan,
+    groceryPlansByMonth,
+    shoppingLists,
+    stockItems,
+    cestaBasicaRecords,
+    salarySettings,
+    emergencySettings,
+    houseFundSettings,
+    futureRentSettings,
+    globalCofrinhoSettings,
+    closingChecklists,
+    investmentContributions,
+    emergencyContributions,
+    renovationExpenses,
+    notifySaved,
+  ]);
 
   // Demo status check
   const hasDemoData = useMemo(() => {
@@ -2624,6 +2921,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       installmentPurchases,
       groceryTrips,
       groceryPlan,
+      groceryPlansByMonth,
       shoppingLists,
       stockItems,
       cestaBasicaRecords,
@@ -2631,6 +2929,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       investmentContributions,
       emergencyContributions,
       emergencySettings,
+      globalCofrinhoSettings,
+      houseFundSettings,
+      renovationExpenses,
+      futureRentSettings,
+      closingChecklists,
+      customCategories,
     };
 
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2679,6 +2983,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       if (parsed.groceryTrips && Array.isArray(parsed.groceryTrips)) {
         setGroceryTrips(ensureUniqueIds(parsed.groceryTrips, 'groc'));
       }
+      if (parsed.groceryPlansByMonth && typeof parsed.groceryPlansByMonth === 'object') {
+        setGroceryPlansByMonth(parsed.groceryPlansByMonth);
+      }
       if (parsed.groceryPlan) {
         setGroceryPlan(parsed.groceryPlan);
       }
@@ -2702,6 +3009,24 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
       if (parsed.emergencySettings) {
         setEmergencySettings(parsed.emergencySettings);
+      }
+      if (parsed.globalCofrinhoSettings) {
+        setGlobalCofrinhoSettings(parsed.globalCofrinhoSettings);
+      }
+      if (parsed.houseFundSettings) {
+        setHouseFundSettings(parsed.houseFundSettings);
+      }
+      if (parsed.renovationExpenses && Array.isArray(parsed.renovationExpenses)) {
+        setRenovationExpenses(ensureUniqueIds(parsed.renovationExpenses, 'renov'));
+      }
+      if (parsed.futureRentSettings) {
+        setFutureRentSettings(parsed.futureRentSettings);
+      }
+      if (parsed.closingChecklists && Array.isArray(parsed.closingChecklists)) {
+        setClosingChecklists(parsed.closingChecklists);
+      }
+      if (parsed.customCategories) {
+        setCustomCategories(parsed.customCategories);
       }
       return true;
     } catch (e) {
@@ -2888,6 +3213,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         isDarkMode,
         toggleTheme,
         setTheme,
+        saveStatus,
+        lastSavedTime,
+        forceSaveNow,
         exportBackupJSON,
         importBackupJSON,
         exportTransactionsCSV,

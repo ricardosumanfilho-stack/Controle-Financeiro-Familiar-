@@ -20,6 +20,7 @@ import {
   Sun,
   Moon,
   Database,
+  Cloud,
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -33,6 +34,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets, 
     setTheme,
     isDarkMode,
     toggleTheme,
+    saveStatus,
+    lastSavedTime,
+    forceSaveNow,
     salarySettings,
     updateSalarySettings,
     emergencySettings,
@@ -471,6 +475,60 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets, 
             </button>
           </div>
         )}
+
+        {/* Auto-save Status Card */}
+        <div className="p-4 rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className={`p-2.5 rounded-xl ${
+              saveStatus === 'saving'
+                ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-600'
+                : saveStatus === 'synced_cloud'
+                ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600'
+                : 'bg-blue-100 dark:bg-blue-950/60 text-blue-600'
+            }`}>
+              {saveStatus === 'saving' ? (
+                <RefreshCw className="w-5 h-5 animate-spin" />
+              ) : saveStatus === 'synced_cloud' ? (
+                <Cloud className="w-5 h-5" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5" />
+              )}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                  Salvamento Automático Ativo
+                </span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  saveStatus === 'saving'
+                    ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'
+                    : saveStatus === 'synced_cloud'
+                    ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                }`}>
+                  {saveStatus === 'saving'
+                    ? 'Salvando alterações...'
+                    : saveStatus === 'synced_cloud'
+                    ? 'Nuvem Supabase Sincronizada'
+                    : 'Salvo em Tempo Real'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                Cada ação, formulário ou edição é gravada imediatamente em armazenamento local seguro e persistente.
+                {lastSavedTime && ` Última gravação automática: ${lastSavedTime}.`}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={forceSaveNow}
+            className="w-full sm:w-auto px-4 py-2 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer shrink-0"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Gravar Agora</span>
+          </button>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {onOpenSupabase && (

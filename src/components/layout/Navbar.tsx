@@ -1,7 +1,22 @@
 import React from 'react';
 import { useFinance } from '../../context/FinanceContext';
 import { addMonthsToKey, formatMonthYearBR } from '../../utils/formatters';
-import { ChevronLeft, ChevronRight, Plus, Download, Sparkles, Wallet, FileSpreadsheet, Sun, Moon, Database } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Download,
+  Sparkles,
+  Wallet,
+  FileSpreadsheet,
+  Sun,
+  Moon,
+  Database,
+  CheckCircle2,
+  RefreshCw,
+  Cloud,
+  AlertCircle,
+} from 'lucide-react';
 import { ActiveTab } from '../../types';
 
 interface NavbarProps {
@@ -27,6 +42,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     theme,
     isDarkMode,
     toggleTheme,
+    saveStatus,
+    lastSavedTime,
+    forceSaveNow,
   } = useFinance();
 
   const handlePrevMonth = () => {
@@ -104,6 +122,47 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action buttons */}
           <div className="flex items-center gap-2">
+            {/* Auto-save Status Indicator */}
+            <button
+              id="auto-save-status-btn"
+              type="button"
+              onClick={forceSaveNow}
+              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all border cursor-pointer ${
+                saveStatus === 'saving'
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 animate-pulse'
+                  : saveStatus === 'synced_cloud'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                  : saveStatus === 'error'
+                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300'
+                  : 'bg-slate-100 dark:bg-slate-800/90 border-slate-200 dark:border-slate-700/80 text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+              }`}
+              title={`Salvo automaticamente ${lastSavedTime ? `às ${lastSavedTime}` : ''}. Clique para forçar gravação.`}
+            >
+              {saveStatus === 'saving' ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-500" />
+              ) : saveStatus === 'synced_cloud' ? (
+                <Cloud className="w-3.5 h-3.5 text-emerald-500" />
+              ) : saveStatus === 'error' ? (
+                <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+              )}
+              <span className="hidden md:inline">
+                {saveStatus === 'saving'
+                  ? 'Salvando...'
+                  : saveStatus === 'synced_cloud'
+                  ? 'Nuvem OK'
+                  : saveStatus === 'error'
+                  ? 'Erro'
+                  : 'Salvo'}
+              </span>
+              {lastSavedTime && (
+                <span className="text-[10px] opacity-70 font-mono hidden xl:inline">
+                  {lastSavedTime}
+                </span>
+              )}
+            </button>
+
             {/* Dark/Light Mode Toggle Button */}
             <button
               id="theme-toggle-btn"
