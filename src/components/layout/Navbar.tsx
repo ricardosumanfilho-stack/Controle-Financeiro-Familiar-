@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Plus,
   Download,
-  Sparkles,
   Wallet,
   FileSpreadsheet,
   Sun,
@@ -37,7 +36,6 @@ export const Navbar: React.FC<NavbarProps> = ({
     setActiveTab,
     selectedMonth,
     setSelectedMonth,
-    hasDemoData,
     alerts,
     theme,
     isDarkMode,
@@ -84,12 +82,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <h1 className="font-bold text-slate-900 dark:text-slate-100 text-base sm:text-lg leading-tight tracking-tight">
                   Gestão Financeira
                 </h1>
-                {hasDemoData && (
-                  <span className="hidden sm:inline-flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                    <Sparkles className="w-3 h-3" />
-                    Demo Ativa
-                  </span>
-                )}
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 hidden sm:block">
                 Ricardo, Ellen & Família

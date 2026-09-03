@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { FinanceProvider, useFinance } from './context/FinanceContext';
 import { Navbar } from './components/layout/Navbar';
 import { BottomNav } from './components/layout/BottomNav';
-import { DemoBanner } from './components/layout/DemoBanner';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { TransactionsView } from './components/transactions/TransactionsView';
 import { CardsView } from './components/cards/CardsView';
@@ -159,9 +158,6 @@ function MainAppContent() {
         onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
         onOpenSupabase={() => setIsSupabaseModalOpen(true)}
       />
-
-      {/* Demo Banner */}
-      <DemoBanner onOpenExportImport={() => setIsExportImportModalOpen(true)} />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6">

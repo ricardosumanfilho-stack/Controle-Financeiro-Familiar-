@@ -265,7 +265,9 @@ interface FinanceContextType {
   // Auto-save & Cloud Sync status
   saveStatus: AutoSaveStatus;
   lastSavedTime: string | null;
+  lastSavedTimestamp: number | null;
   forceSaveNow: () => void;
+  purgeWeekOldData: () => void;
 
   // Export & Import
   exportBackupJSON: () => void;
@@ -302,12 +304,85 @@ export const STORAGE_KEYS = {
   SELECTED_MONTH: 'fin_family_selected_month_v2',
   CUSTOM_CATEGORIES: 'fin_family_custom_categories_v2',
   ACTIVE_TAB: 'fin_family_active_tab_v2',
+  LAST_SAVED_TIMESTAMP: 'fin_family_last_saved_timestamp_v2',
 };
+
+export const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias em milissegundos
+
+export const KEYS_TO_PURGE_ON_EXPIRY = [
+  STORAGE_KEYS.TRANSACTIONS,
+  STORAGE_KEYS.CARDS,
+  STORAGE_KEYS.CARD_SUBSCRIPTIONS,
+  STORAGE_KEYS.COFRINHOS,
+  STORAGE_KEYS.COFRINHO_MOVEMENTS,
+  STORAGE_KEYS.INSTALLMENTS,
+  STORAGE_KEYS.GROCERY,
+  STORAGE_KEYS.GROCERY_PLAN,
+  STORAGE_KEYS.GROCERY_PLANS_BY_MONTH,
+  STORAGE_KEYS.SHOPPING_LISTS,
+  STORAGE_KEYS.STOCK_ITEMS,
+  STORAGE_KEYS.CESTA_BASICA,
+  STORAGE_KEYS.SALARY_SETTINGS,
+  STORAGE_KEYS.INVESTMENTS,
+  STORAGE_KEYS.EMERGENCY,
+  STORAGE_KEYS.EMERGENCY_SETTINGS,
+  STORAGE_KEYS.GLOBAL_COFRINHO_SETTINGS,
+  STORAGE_KEYS.HOUSE_FUND_SETTINGS,
+  STORAGE_KEYS.RENOVATION_EXPENSES,
+  STORAGE_KEYS.FUTURE_RENT_SETTINGS,
+  STORAGE_KEYS.CLOSING_CHECKLISTS,
+  STORAGE_KEYS.DISMISSED_ALERTS,
+  STORAGE_KEYS.CUSTOM_CATEGORIES,
+  STORAGE_KEYS.SELECTED_MONTH,
+  STORAGE_KEYS.ACTIVE_TAB,
+];
+
+export const checkAndPurgeExpiredSavedData = (): boolean => {
+  try {
+    const rawTimestamp = localStorage.getItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP);
+    const now = Date.now();
+    if (!rawTimestamp) {
+      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, now.toString());
+      return false;
+    }
+
+    const lastSavedTime = Number(rawTimestamp);
+    if (isNaN(lastSavedTime) || lastSavedTime <= 0) {
+      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, now.toString());
+      return false;
+    }
+
+    const diff = now - lastSavedTime;
+
+    // Quando tiver uma diferença de 1 semana ou mais do salvamento atual (>= 7 dias), apagar dados antigos
+    if (diff >= ONE_WEEK_MS) {
+      console.warn(`[FinanceContext] Dados salvos possuem 1 semana ou mais de diferença (${(diff / (1000 * 60 * 60 * 24)).toFixed(1)} dias). Apagando salvamento antigo.`);
+      
+      KEYS_TO_PURGE_ON_EXPIRY.forEach((key) => {
+        try {
+          localStorage.removeItem(key);
+        } catch {}
+      });
+
+      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, now.toString());
+      return true;
+    }
+  } catch (err) {
+    console.error('Erro ao checar política de retenção de 1 semana:', err);
+  }
+  return false;
+};
+
+// Executa antes da montagem inicial dos hooks do React
+checkAndPurgeExpiredSavedData();
 
 export const safeStorageSet = (key: string, value: any) => {
   try {
     const serialized = typeof value === 'string' ? value : JSON.stringify(value);
     localStorage.setItem(key, serialized);
+    if (key !== STORAGE_KEYS.LAST_SAVED_TIMESTAMP) {
+      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, Date.now().toString());
+    }
   } catch (err) {
     console.error(`Erro ao salvar automaticamente no localStorage (${key}):`, err);
   }
@@ -664,13 +739,50 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   // Auto-save & cloud sync state
   const [saveStatus, setSaveStatus] = useState<AutoSaveStatus>('saved');
+  const [lastSavedTimestamp, setLastSavedTimestamp] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP);
+      if (raw) {
+        const parsed = Number(raw);
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+      }
+    } catch {}
+    const now = Date.now();
+    try {
+      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, now.toString());
+    } catch {}
+    return now;
+  });
+
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP);
+      if (raw) {
+        const parsed = Number(raw);
+        if (!isNaN(parsed) && parsed > 0) {
+          const d = new Date(parsed);
+          const day = String(d.getDate()).padStart(2, '0');
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          return `${day}/${month} ${time}`;
+        }
+      }
+    } catch {}
     return new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   });
 
   const notifySaved = useCallback((isCloud = false) => {
+    const now = Date.now();
     setSaveStatus(isCloud ? 'synced_cloud' : 'saved');
-    setLastSavedTime(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    setLastSavedTimestamp(now);
+    const d = new Date(now);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    setLastSavedTime(`${day}/${month} ${time}`);
+    try {
+      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, now.toString());
+    } catch {}
   }, []);
 
   // Refs to guarantee 100% synchronous data flushing before unload
@@ -791,6 +903,72 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     notifySaved(isSupabaseConfigured());
   }, [notifySaved]);
+
+  const purgeWeekOldData = useCallback(() => {
+    KEYS_TO_PURGE_ON_EXPIRY.forEach((key) => {
+      try {
+        localStorage.removeItem(key);
+      } catch {}
+    });
+    const now = Date.now();
+    try {
+      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, now.toString());
+    } catch {}
+
+    setTransactions([]);
+    setCards(INITIAL_CARDS);
+    setCardSubscriptions(INITIAL_CARD_SUBSCRIPTIONS);
+    setCofrinhos(INITIAL_COFRINHOS);
+    setCofrinhoMovements([]);
+    setInstallmentPurchases([]);
+    setGroceryTrips([]);
+    setGroceryPlan(INITIAL_GROCERY_PLAN);
+    setGroceryPlansByMonth({ '2026-08': INITIAL_GROCERY_PLAN });
+    setShoppingLists([]);
+    setStockItems(INITIAL_STOCK_ITEMS);
+    setCestaBasicaRecords([]);
+    setSalarySettings(INITIAL_SALARY_SETTINGS);
+    setInvestmentContributions([]);
+    setEmergencyContributions([]);
+    setEmergencySettings(INITIAL_EMERGENCY_SETTINGS);
+    setGlobalCofrinhoSettings(INITIAL_GLOBAL_COFRINHO_SETTINGS);
+    setHouseFundSettings(INITIAL_HOUSE_FUND_SETTINGS);
+    setRenovationExpenses([]);
+    setFutureRentSettings(INITIAL_FUTURE_RENT_SETTINGS);
+    setClosingChecklists([]);
+    setDismissedAlertIds([]);
+    setCustomCategories([]);
+    setSelectedMonthState('2026-08');
+    setActiveTabState('dashboard');
+
+    setLastSavedTimestamp(now);
+    notifySaved(false);
+  }, [notifySaved]);
+
+  // Monitora retenção de 1 semana periodicamente e ao focar na página
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const purged = checkAndPurgeExpiredSavedData();
+      if (purged) {
+        purgeWeekOldData();
+      }
+    }, 60 * 60 * 1000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        const purged = checkAndPurgeExpiredSavedData();
+        if (purged) {
+          purgeWeekOldData();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [purgeWeekOldData]);
 
   // Save to localStorage whenever state changes
   useEffect(() => {
@@ -3215,7 +3393,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         setTheme,
         saveStatus,
         lastSavedTime,
+        lastSavedTimestamp,
         forceSaveNow,
+        purgeWeekOldData,
         exportBackupJSON,
         importBackupJSON,
         exportTransactionsCSV,
