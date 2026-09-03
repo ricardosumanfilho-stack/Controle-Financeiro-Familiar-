@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useFinance } from '../../context/FinanceContext';
 import { GroceryTrip, Person } from '../../types';
 import { formatCurrency, formatDateBR, formatMonthYearBR, getPersonBadgeColor } from '../../utils/formatters';
+import { ConfirmModal } from '../common/ConfirmModal';
 import {
   ShoppingCart,
   Plus,
@@ -47,6 +48,7 @@ export const GroceryView: React.FC<GroceryViewProps> = ({
   const [isEditingGoal, setIsEditingGoal] = useState(false);
   const [tempGoal, setTempGoal] = useState(String(groceryMonthlyGoal));
   const [selectedPersonFilter, setSelectedPersonFilter] = useState<'Todos' | Person>('Todos');
+  const [tripToDelete, setTripToDelete] = useState<GroceryTrip | null>(null);
 
   // Filter trips for the selected month
   const monthTrips = React.useMemo(() => {
@@ -476,13 +478,9 @@ export const GroceryView: React.FC<GroceryViewProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (window.confirm(`Deseja excluir a compra em "${trip.storeName}"?`)) {
-                            deleteGroceryTrip(trip.id);
-                          }
-                        }}
+                        onClick={() => setTripToDelete(trip)}
                         className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors"
-                        title="Excluir"
+                        title="Excluir Compra"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -494,6 +492,24 @@ export const GroceryView: React.FC<GroceryViewProps> = ({
           </div>
         )}
       </div>
+
+      {tripToDelete && (
+        <ConfirmModal
+          isOpen={Boolean(tripToDelete)}
+          onClose={() => setTripToDelete(null)}
+          onConfirm={() => {
+            if (tripToDelete) {
+              deleteGroceryTrip(tripToDelete.id);
+              setTripToDelete(null);
+            }
+          }}
+          title="Excluir Compra de Supermercado"
+          message={`Tem certeza que deseja excluir a compra no estabelecimento "${tripToDelete.storeName}" no valor de ${formatCurrency(tripToDelete.totalAmount)}?`}
+          confirmText="Sim, Excluir Compra"
+          cancelText="Cancelar"
+          confirmVariant="danger"
+        />
+      )}
     </div>
   );
 };

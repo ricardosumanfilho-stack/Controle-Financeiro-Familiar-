@@ -39,7 +39,21 @@ import {
   Award,
   RefreshCw,
   ShoppingBag,
+  Target,
+  Settings2,
+  ExternalLink,
+  Zap,
 } from 'lucide-react';
+import { EllenCestaBasicaModal } from './EllenCestaBasicaModal';
+import { LiveMarketModal } from './LiveMarketModal';
+import { ShoppingListEditModal } from './ShoppingListEditModal';
+import { createCarrefourMasterShoppingList } from '../../data/carrefourMasterList';
+import {
+  analyzeStockItem,
+  generateSmartShoppingListFromStock,
+  generateShoppingListFromCestaBasica,
+} from '../../utils/stockReplenishment';
+import { CARREFOUR_CATALOG } from '../../data/carrefourCatalog';
 
 interface SupermarketViewProps {
   onOpenNewTripModal?: () => void;
@@ -52,19 +66,29 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
     selectedMonth,
     groceryTrips,
     groceryPlan,
+    groceryMonthlyGoal,
+    setGroceryMonthlyGoal,
+    updateGroceryPlanSettings,
+    person1Name,
+    person2Name,
     shoppingLists,
     stockItems,
     cestaBasicaRecords,
     addGroceryTrip,
     deleteGroceryTrip,
     toggleRicardoWeek,
+    updateRicardoWeekAmount,
+    toggleEllenWeek,
+    updateEllenWeekAmount,
     toggleEllenGrocery,
+    updateEllenGroceryAmount,
     setGroceryPlanningMode,
     addShoppingList,
     updateShoppingList,
     deleteShoppingList,
     copyShoppingList,
     convertShoppingListToTrip,
+    generateAutoShoppingListFromStock,
     addStockItem,
     updateStockItem,
     deleteStockItem,
@@ -72,39 +96,266 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
     deleteCestaBasicaRecord,
   } = useFinance();
 
+  const p1 = person1Name || 'Ricardo';
+  const p2 = person2Name || 'Ellen';
+
   const [activeSubTab, setActiveSubTab] = useState<GroceryTab>('resumo');
   const [isTripModalOpen, setIsTripModalOpen] = useState(false);
   const [isListModalOpen, setIsListModalOpen] = useState(false);
+  const [editingShoppingList, setEditingShoppingList] = useState<ShoppingList | null>(null);
+  const [isEditListModalOpen, setIsEditListModalOpen] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isCestaModalOpen, setIsCestaModalOpen] = useState(false);
+  const [isEllenCestaOpen, setIsEllenCestaOpen] = useState(false);
+  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [productCategoryFilter, setProductCategoryFilter] = useState<string>('Todas');
   const [productSearch, setProductSearch] = useState<string>('');
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
+  const [listToDelete, setListToDelete] = useState<ShoppingList | null>(null);
+
+  // Live Market State
+  const [liveMarketList, setLiveMarketList] = useState<ShoppingList | null>(null);
+  const [isLiveMarketOpen, setIsLiveMarketOpen] = useState(false);
+  const [personWeeklyTab, setPersonWeeklyTab] = useState<'Ricardo' | 'Ellen'>('Ricardo');
+
+  // Goal configuration state
+  const [tempGoals, setTempGoals] = useState({
+    monthlyGoal: groceryMonthlyGoal || 1000,
+    ricardoWeekly: groceryPlan.ricardoWeeklyPlanned || 150,
+    ellenMonthly: groceryPlan.ellenMonthlyPlanned || 400,
+    ellenWeekly: groceryPlan.ellenWeeklyPlanned || 80,
+    ellenPlanningType: groceryPlan.ellenPlanningType || 'semanal',
+    totalWeeks: groceryPlan.totalWeeks || 4,
+  });
 
   // Filter trips for selected month
   const monthTrips = useMemo(() => {
     return groceryTrips.filter((trip) => trip.date.startsWith(selectedMonth));
   }, [groceryTrips, selectedMonth]);
 
-  // Contribution calculations
+  // Helper to compute week number from date
+  const getWeekNumberFromDate = (dateStr: string, manualWeek?: number): number => {
+    if (manualWeek && manualWeek >= 1 && manualWeek <= 5) return manualWeek;
+    if (!dateStr) return 1;
+    const day = parseInt(dateStr.slice(8, 10), 10);
+    if (isNaN(day)) return 1;
+    if (day <= 7) return 1;
+    if (day <= 14) return 2;
+    if (day <= 21) return 3;
+    if (day <= 28) return 4;
+    return 5;
+  };
+
+  // Contribution and Month Total calculations
   const weeksCount = groceryPlan.totalWeeks || 4;
-  const ricardoPlanned = groceryPlan.mode === 'opcao_b' ? 600 : (weeksCount === 5 ? 750 : 600);
-  const ellenPlanned = 400;
-  const totalPlanned = ricardoPlanned + ellenPlanned;
+  const ricardoPlanned = groceryPlan.mode === 'opcao_b' ? 600 : ((groceryPlan.ricardoWeeklyPlanned || 150) * weeksCount);
+  const ellenPlanned = groceryPlan.ellenMonthlyPlanned || 400;
+  const totalPlanned = groceryMonthlyGoal || (ricardoPlanned + ellenPlanned);
 
   const ricardoRealized = groceryPlan.ricardoWeeks.reduce(
     (sum, w) => sum + (w.completed ? (w.actualAmount || w.plannedAmount || 150) : 0),
     0
   );
   const ellenRealized = groceryPlan.ellenCompleted
-    ? (groceryPlan.ellenActualAmount || 400)
+    ? (groceryPlan.ellenActualAmount || ellenPlanned)
     : 0;
   const totalRealized = ricardoRealized + ellenRealized;
 
   const totalSpent = monthTrips.reduce((sum, trip) => sum + trip.totalAmount, 0);
-  const balanceRemaining = totalRealized - totalSpent;
+  const balanceRemaining = totalPlanned - totalSpent;
   const tripsCount = monthTrips.length;
   const averagePerTrip = tripsCount > 0 ? totalSpent / tripsCount : 0;
+
+  // Dynamic Weekly Roll-over / Carry-over Analysis
+  const weeklyAnalysis = useMemo(() => {
+    const totalWeeks = groceryPlan.totalWeeks || 4;
+    const baseWeekly = groceryPlan.ricardoWeeklyPlanned || 150;
+
+    type WeekReport = {
+      weekIndex: number;
+      weekLabel: string;
+      dateRange: string;
+      baseGoal: number;
+      carryOverIn: number;
+      adjustedGoal: number;
+      trips: GroceryTrip[];
+      actualSpent: number;
+      resultingBalance: number;
+      accumulatedBudgetSoFar: number;
+      accumulatedSpentSoFar: number;
+      status: 'surplus' | 'deficit' | 'exact' | 'unspent';
+    };
+
+    const reports: WeekReport[] = [];
+    let runningCarryOver = 0;
+    let accumulatedBudget = 0;
+    let accumulatedSpent = 0;
+
+    const ranges = [
+      'Dias 01 a 07',
+      'Dias 08 a 14',
+      'Dias 15 a 21',
+      'Dias 22 a 28',
+      'Dias 29 em diante',
+    ];
+
+    for (let w = 1; w <= totalWeeks; w++) {
+      const planWeek = groceryPlan.ricardoWeeks?.find((rw) => rw.weekIndex === w);
+      const baseGoal = planWeek?.plannedAmount || baseWeekly;
+      const carryOverIn = runningCarryOver;
+      const adjustedGoal = baseGoal + carryOverIn;
+
+      // Trips for this week (semanal or default)
+      const tripsThisWeek = monthTrips.filter((t) => {
+        const isWeekly = t.tripType === 'semanal' || (!t.tripType && !t.isExtraordinary);
+        if (!isWeekly) return false;
+        const weekNum = t.weekNumber || getWeekNumberFromDate(t.date);
+        return weekNum === w;
+      });
+
+      const actualSpent = tripsThisWeek.reduce((sum, t) => sum + t.totalAmount, 0);
+      const resultingBalance = adjustedGoal - actualSpent;
+
+      runningCarryOver = resultingBalance;
+      accumulatedBudget += baseGoal;
+      accumulatedSpent += actualSpent;
+
+      let status: 'surplus' | 'deficit' | 'exact' | 'unspent' = 'exact';
+      if (actualSpent === 0) {
+        status = 'unspent';
+      } else if (resultingBalance > 0) {
+        status = 'surplus';
+      } else if (resultingBalance < 0) {
+        status = 'deficit';
+      }
+
+      reports.push({
+        weekIndex: w,
+        weekLabel: planWeek?.weekLabel || `Semana ${w}`,
+        dateRange: ranges[w - 1] || `Semana ${w}`,
+        baseGoal,
+        carryOverIn,
+        adjustedGoal,
+        trips: tripsThisWeek,
+        actualSpent,
+        resultingBalance,
+        accumulatedBudgetSoFar: accumulatedBudget,
+        accumulatedSpentSoFar: accumulatedSpent,
+        status,
+      });
+    }
+
+    return {
+      reports,
+      finalCarryOver: runningCarryOver,
+      totalWeeklySpent: accumulatedSpent,
+      totalWeeklyBudget: accumulatedBudget,
+    };
+  }, [groceryPlan, monthTrips]);
+
+  // Dynamic Weekly Analysis with Rollover / Carry-over for Ellen
+  const ellenWeeklyAnalysis = useMemo(() => {
+    const totalWeeks = groceryPlan.totalWeeks || 4;
+    const baseWeekly = groceryPlan.ellenWeeklyPlanned || 80;
+
+    type WeekReport = {
+      weekIndex: number;
+      weekLabel: string;
+      dateRange: string;
+      baseGoal: number;
+      carryOverIn: number;
+      adjustedGoal: number;
+      trips: GroceryTrip[];
+      actualSpent: number;
+      resultingBalance: number;
+      accumulatedBudgetSoFar: number;
+      accumulatedSpentSoFar: number;
+      status: 'surplus' | 'deficit' | 'exact' | 'unspent';
+    };
+
+    const reports: WeekReport[] = [];
+    let runningCarryOver = 0;
+    let accumulatedBudget = 0;
+    let accumulatedSpent = 0;
+
+    const ranges = [
+      'Dias 01 a 07',
+      'Dias 08 a 14',
+      'Dias 15 a 21',
+      'Dias 22 a 28',
+      'Dias 29 em diante',
+    ];
+
+    for (let w = 1; w <= totalWeeks; w++) {
+      const planWeek = groceryPlan.ellenWeeks?.find((ew) => ew.weekIndex === w);
+      const baseGoal = planWeek?.plannedAmount || baseWeekly;
+      const carryOverIn = runningCarryOver;
+      const adjustedGoal = baseGoal + carryOverIn;
+
+      // Trips for Ellen in this week
+      const tripsThisWeek = monthTrips.filter((t) => {
+        const isEllenTrip = t.person === 'Ellen';
+        const isWeekly = t.tripType === 'semanal' || (!t.tripType && !t.isExtraordinary);
+        if (!isWeekly || !isEllenTrip) return false;
+        const weekNum = t.weekNumber || getWeekNumberFromDate(t.date);
+        return weekNum === w;
+      });
+
+      const actualSpent = tripsThisWeek.reduce((sum, t) => sum + t.totalAmount, 0);
+      const resultingBalance = adjustedGoal - actualSpent;
+
+      runningCarryOver = resultingBalance;
+      accumulatedBudget += baseGoal;
+      accumulatedSpent += actualSpent;
+
+      let status: 'surplus' | 'deficit' | 'exact' | 'unspent' = 'exact';
+      if (actualSpent === 0) {
+        status = 'unspent';
+      } else if (resultingBalance > 0) {
+        status = 'surplus';
+      } else if (resultingBalance < 0) {
+        status = 'deficit';
+      }
+
+      reports.push({
+        weekIndex: w,
+        weekLabel: planWeek?.weekLabel || `Semana ${w}`,
+        dateRange: ranges[w - 1] || `Semana ${w}`,
+        baseGoal,
+        carryOverIn,
+        adjustedGoal,
+        trips: tripsThisWeek,
+        actualSpent,
+        resultingBalance,
+        accumulatedBudgetSoFar: accumulatedBudget,
+        accumulatedSpentSoFar: accumulatedSpent,
+        status,
+      });
+    }
+
+    return {
+      reports,
+      finalCarryOver: runningCarryOver,
+      totalWeeklySpent: accumulatedSpent,
+      totalWeeklyBudget: accumulatedBudget,
+    };
+  }, [groceryPlan, monthTrips]);
+
+  // Monthly Abastecimento Trips
+  const monthlyAbastecimentoTrips = useMemo(() => {
+    return monthTrips.filter((t) => t.tripType === 'mensal');
+  }, [monthTrips]);
+  const monthlyAbastecimentoSpent = useMemo(() => {
+    return monthlyAbastecimentoTrips.reduce((sum, t) => sum + t.totalAmount, 0);
+  }, [monthlyAbastecimentoTrips]);
+
+  // Extraordinary Trips
+  const extraordinaryTrips = useMemo(() => {
+    return monthTrips.filter((t) => t.tripType === 'extraordinaria' || t.isExtraordinary);
+  }, [monthTrips]);
+  const extraordinarySpent = useMemo(() => {
+    return extraordinaryTrips.reduce((sum, t) => sum + t.totalAmount, 0);
+  }, [extraordinaryTrips]);
 
   // Store usage analysis
   const storeUsageMap = useMemo(() => {
@@ -256,6 +507,9 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
     storeName: string;
     person: Person;
     paymentMethod: any;
+    tripType: 'semanal' | 'mensal' | 'extraordinaria';
+    weekNumber: number;
+    manualTotalAmount: string;
     isExtraordinary: boolean;
     promotionalSavings: number;
     appOrCpfSavings: number;
@@ -274,6 +528,9 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
     storeName: 'Assaí',
     person: 'Família',
     paymentMethod: 'debito',
+    tripType: 'semanal',
+    weekNumber: 1,
+    manualTotalAmount: '',
     isExtraordinary: false,
     promotionalSavings: 0,
     appOrCpfSavings: 0,
@@ -337,6 +594,23 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
     itemsText: 'Arroz Tipo 1 5kg (2un)\nFeijão Carioca 1kg (3un)\nÓleo de Soja 900ml (2un)\nCafé Moído 500g (2un)\nAçúcar 1kg (3un)\nMacarrão 500g (4un)\nExtrato de Tomate (4un)',
   });
 
+  const handleSaveGoalSettings = (e: React.FormEvent) => {
+    e.preventDefault();
+    const mg = Number(tempGoals.monthlyGoal) || 1000;
+    const rw = Number(tempGoals.ricardoWeekly) || 150;
+    const em = Number(tempGoals.ellenMonthly) || 400;
+    const tw = Number(tempGoals.totalWeeks) || 4;
+
+    setGroceryMonthlyGoal(mg);
+    updateGroceryPlanSettings({
+      monthlyGoal: mg,
+      ricardoWeeklyPlanned: rw,
+      ellenMonthlyPlanned: em,
+      totalWeeks: tw,
+    });
+    setIsGoalModalOpen(false);
+  };
+
   const handleSaveTrip = (e: React.FormEvent) => {
     e.preventDefault();
     const products: GroceryProduct[] = newTripData.items
@@ -349,32 +623,45 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
         unit: i.unit || 'un',
         unitPrice: Number(i.unitPrice) || 0,
         totalPrice: (Number(i.quantity) || 1) * (Number(i.unitPrice) || 0),
-        isExtraordinary: i.isExtraordinary || newTripData.isExtraordinary,
+        isExtraordinary: i.isExtraordinary || newTripData.tripType === 'extraordinaria',
       }));
 
     const calculatedTotal = products.reduce((sum, p) => sum + p.totalPrice, 0);
+    const manualNum = parseFloat(newTripData.manualTotalAmount.replace(',', '.'));
+    const finalTotal = !isNaN(manualNum) && manualNum > 0 ? manualNum : calculatedTotal;
+
+    if (finalTotal <= 0) {
+      alert('Informe o valor real da compra ou detalhe os itens com preço.');
+      return;
+    }
 
     addGroceryTrip({
       date: newTripData.date,
       storeName: newTripData.storeName,
-      totalAmount: calculatedTotal > 0 ? calculatedTotal : 0,
+      totalAmount: finalTotal,
       person: newTripData.person,
       paymentMethod: newTripData.paymentMethod,
-      isExtraordinary: newTripData.isExtraordinary,
+      tripType: newTripData.tripType,
+      weekNumber: newTripData.tripType === 'semanal' ? newTripData.weekNumber : undefined,
+      isExtraordinary: newTripData.tripType === 'extraordinaria',
       promotionalSavings: Number(newTripData.promotionalSavings) || 0,
       appOrCpfSavings: Number(newTripData.appOrCpfSavings) || 0,
       storeCardSavings: Number(newTripData.storeCardSavings) || 0,
       notes: newTripData.notes,
-      products,
+      products: products.length > 0 ? products : undefined,
     });
 
     setIsTripModalOpen(false);
     // Reset form
+    const today = new Date().toISOString().slice(0, 10);
     setNewTripData({
-      date: new Date().toISOString().slice(0, 10),
+      date: today.startsWith(selectedMonth) ? today : `${selectedMonth}-10`,
       storeName: 'Assaí',
       person: 'Família',
       paymentMethod: 'debito',
+      tripType: 'semanal',
+      weekNumber: getWeekNumberFromDate(today.startsWith(selectedMonth) ? today : `${selectedMonth}-10`),
+      manualTotalAmount: '',
       isExtraordinary: false,
       promotionalSavings: 0,
       appOrCpfSavings: 0,
@@ -422,6 +709,35 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
       type: 'semanal',
       items: [{ product: '', quantity: 1, unit: 'kg', category: 'Frutas, verduras e legumes', priority: 'Alta', preferredStore: 'Carrefour', estimatedPrice: 0 }],
     });
+  };
+
+  const handleSaveEditedShoppingList = (listData: {
+    id?: string;
+    name: string;
+    type: 'semanal' | 'mensal' | 'reposicao' | 'personalizada';
+    monthKey: string;
+    items: ShoppingListItem[];
+    estimatedTotal: number;
+  }) => {
+    if (listData.id) {
+      updateShoppingList(listData.id, {
+        name: listData.name,
+        type: listData.type,
+        items: listData.items,
+        estimatedTotal: listData.estimatedTotal,
+      });
+    } else {
+      addShoppingList({
+        name: listData.name,
+        type: listData.type,
+        monthKey: listData.monthKey || selectedMonth,
+        createdAt: new Date().toISOString().slice(0, 10),
+        items: listData.items,
+        estimatedTotal: listData.estimatedTotal,
+      });
+    }
+    setIsEditListModalOpen(false);
+    setEditingShoppingList(null);
   };
 
   const handleSaveStockItem = (e: React.FormEvent) => {
@@ -572,31 +888,68 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
       {/* 5A. RESUMO DO MÊS */}
       {activeSubTab === 'resumo' && (
         <div className="space-y-6">
+          {/* Header & Goal Settings Action */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-transparent border border-emerald-200 dark:border-emerald-900/40">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <Target className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                Planejamento & Acompanhamento de Metas ({formatMonthYearBR(selectedMonth)})
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Metas semanais ajustadas dinamicamente com acúmulo de sobras e compensação de estouros entre as semanas.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setTempGoals({
+                    monthlyGoal: groceryMonthlyGoal || 1000,
+                    ricardoWeekly: groceryPlan.ricardoWeeklyPlanned || 150,
+                    ellenMonthly: groceryPlan.ellenMonthlyPlanned || 400,
+                    totalWeeks: groceryPlan.totalWeeks || 4,
+                  });
+                  setIsGoalModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xs transition-colors"
+              >
+                <Settings2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Configurar Metas</span>
+              </button>
+              <button
+                onClick={() => setIsTripModalOpen(true)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Registrar Compra</span>
+              </button>
+            </div>
+          </div>
+
           {/* Main Key Figures Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Disponível vs Gasto */}
+            {/* Meta Total */}
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Total Disponível</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-semibold">
-                  Planejado {formatCurrency(totalPlanned)}
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Meta Total do Mês</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-semibold">
+                  Planejado
                 </span>
               </div>
               <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-                {formatCurrency(totalRealized)}
+                {formatCurrency(totalPlanned)}
               </p>
               <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100 dark:border-slate-800">
-                <span>Total gasto:</span>
-                <span className="font-semibold text-red-600 dark:text-red-400">
+                <span>Gasto real acumulado:</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">
                   {formatCurrency(totalSpent)}
                 </span>
               </div>
             </div>
 
-            {/* Saldo Restante */}
+            {/* Saldo Restante no Mês */}
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Saldo Restante</span>
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Saldo Restante do Mês</span>
                 <span
                   className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
                     balanceRemaining >= 0
@@ -604,7 +957,7 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                       : 'bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300'
                   }`}
                 >
-                  {balanceRemaining >= 0 ? 'Dentro do saldo' : 'Excedido'}
+                  {balanceRemaining >= 0 ? 'Dentro da Meta' : 'Meta Estourada'}
                 </span>
               </div>
               <p
@@ -617,30 +970,33 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
               <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all ${
-                    totalSpent > totalRealized ? 'bg-red-500' : 'bg-emerald-500'
+                    totalSpent > totalPlanned ? 'bg-red-500' : 'bg-emerald-500'
                   }`}
                   style={{
-                    width: `${Math.min(100, totalRealized > 0 ? (totalSpent / totalRealized) * 100 : 0)}%`,
+                    width: `${Math.min(100, totalPlanned > 0 ? (totalSpent / totalPlanned) * 100 : 0)}%`,
                   }}
                 />
               </div>
             </div>
 
-            {/* Compras e Ticket Médio */}
+            {/* Compras Realizadas */}
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Compras Realizadas</span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Compras Realizadas</span>
+                <ShoppingCart className="w-4 h-4 text-blue-500" />
+              </div>
               <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">
                 {tripsCount} <span className="text-sm font-normal text-slate-500">visitas</span>
               </p>
               <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100 dark:border-slate-800">
-                <span>Valor médio:</span>
+                <span>Média por compra:</span>
                 <span className="font-semibold text-slate-800 dark:text-slate-200">
                   {formatCurrency(averagePerTrip)}
                 </span>
               </div>
             </div>
 
-            {/* Economia Gerada (Promoções / CPF / Cartão) */}
+            {/* Economia Gerada */}
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Economia Total</span>
@@ -658,118 +1014,253 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
             </div>
           </div>
 
-          {/* Detailed Contributions Table & Planning Switch */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Ricardo's Weekly Contribution Breakdown */}
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                    Contribuição Ricardo (Semanal)
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Planejado: {formatCurrency(ricardoPlanned)} | Realizado: {formatCurrency(ricardoRealized)}
-                  </p>
+          {/* QUADRO DINÂMICO DE METAS SEMANAIS COM ACÚMULO E ROLAGEM */}
+          <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-blue-600" />
+                  <h4 className="font-bold text-slate-900 dark:text-slate-100 text-sm">
+                    Controle Semanal com Saldo Rolado
+                  </h4>
                 </div>
-                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-[11px]">
-                  <button
-                    onClick={() => setGroceryPlanningMode('opcao_a')}
-                    className={`px-2 py-1 rounded-lg font-medium transition-colors ${
-                      groceryPlan.mode !== 'opcao_b'
-                        ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 font-bold shadow-xs'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    R$ 150/sem
-                  </button>
-                  <button
-                    onClick={() => setGroceryPlanningMode('opcao_b')}
-                    className={`px-2 py-1 rounded-lg font-medium transition-colors ${
-                      groceryPlan.mode === 'opcao_b'
-                        ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 font-bold shadow-xs'
-                        : 'text-slate-500'
-                    }`}
-                  >
-                    Fixar R$ 600
-                  </button>
-                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {personWeeklyTab === 'Ricardo'
+                    ? `Meta base de ${formatCurrency(groceryPlan.ricardoWeeklyPlanned || 150)}/sem (${p1}). Sobras ou estouros acumulam automaticamente.`
+                    : `Meta base de ${formatCurrency(groceryPlan.ellenWeeklyPlanned || 80)}/sem (${p2}). Sobras ou estouros acumulam automaticamente.`}
+                </p>
               </div>
 
-              <div className="space-y-2">
-                {groceryPlan.ricardoWeeks.map((week) => (
-                  <div
-                    key={week.weekIndex}
-                    onClick={() => toggleRicardoWeek(week.weekIndex)}
-                    className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
-                      week.completed
-                        ? 'bg-blue-50/60 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800/60'
-                        : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={week.completed}
-                        onChange={() => {}}
-                        className="w-4 h-4 rounded text-blue-600"
-                      />
-                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                        {week.weekLabel}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                        {formatCurrency(week.plannedAmount || 150)}
-                      </span>
-                      <span className="block text-[10px] text-slate-400">
-                        {week.completed ? 'Transferido' : 'Pendente'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+              {/* Persona Tab Switcher */}
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setPersonWeeklyTab('Ricardo')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    personWeeklyTab === 'Ricardo'
+                      ? 'bg-blue-600 text-white shadow-2xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  {p1} ({formatCurrency(weeklyAnalysis.totalWeeklySpent)} / {formatCurrency(weeklyAnalysis.totalWeeklyBudget)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPersonWeeklyTab('Ellen')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    personWeeklyTab === 'Ellen'
+                      ? 'bg-pink-600 text-white shadow-2xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  {p2} ({formatCurrency(ellenWeeklyAnalysis.totalWeeklySpent)} / {formatCurrency(ellenWeeklyAnalysis.totalWeeklyBudget)})
+                </button>
               </div>
             </div>
 
-            {/* Ellen's Monthly Contribution Breakdown */}
+            {/* Weekly Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              {(personWeeklyTab === 'Ricardo' ? weeklyAnalysis.reports : ellenWeeklyAnalysis.reports).map((report) => {
+                const hasTrips = report.trips.length > 0;
+                const isOver = report.resultingBalance < 0;
+                const isSurplus = report.resultingBalance > 0 && hasTrips;
+                const isUnspent = !hasTrips;
+                const currentPerson = personWeeklyTab;
+
+                return (
+                  <div
+                    key={report.weekIndex}
+                    className={`p-4 rounded-2xl border transition-all space-y-3 ${
+                      isOver
+                        ? 'bg-red-50/40 dark:bg-red-950/20 border-red-200 dark:border-red-900/60'
+                        : isSurplus
+                        ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/60'
+                        : isUnspent
+                        ? 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800'
+                        : 'bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900/60'
+                    }`}
+                  >
+                    {/* Header */}
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                          {report.weekLabel}
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-medium">
+                          {report.dateRange}
+                        </span>
+                      </div>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                          isOver
+                            ? 'bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300'
+                            : isSurplus
+                            ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                            : isUnspent
+                            ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300'
+                            : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
+                        }`}
+                      >
+                        {isOver
+                          ? 'Estouro'
+                          : isSurplus
+                          ? 'Economia'
+                          : isUnspent
+                          ? 'Acumulando'
+                          : 'Na Meta'}
+                      </span>
+                    </div>
+
+                    {/* Breakdown Math */}
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                        <span>Meta Base:</span>
+                        <span className="font-medium">{formatCurrency(report.baseGoal)}</span>
+                      </div>
+
+                      {report.weekIndex > 1 && (
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-slate-500">Saldo Semana Anterior:</span>
+                          <span
+                            className={`font-semibold ${
+                              report.carryOverIn >= 0
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-red-600 dark:text-red-400'
+                            }`}
+                          >
+                            {report.carryOverIn >= 0 ? '+' : ''}
+                            {formatCurrency(report.carryOverIn)}
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between text-slate-700 dark:text-slate-200 font-semibold pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
+                        <span>Meta Ajustada:</span>
+                        <span className={currentPerson === 'Ellen' ? 'text-pink-600 dark:text-pink-400' : 'text-blue-600 dark:text-blue-400'}>
+                          {formatCurrency(report.adjustedGoal)}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center pt-1">
+                        <span className="font-bold text-slate-800 dark:text-slate-100">Gasto Real:</span>
+                        <span className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                          {formatCurrency(report.actualSpent)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Resulting Rollover Banner */}
+                    <div
+                      className={`p-2 rounded-xl text-[11px] font-medium ${
+                        isOver
+                          ? 'bg-red-100/70 dark:bg-red-950/60 text-red-800 dark:text-red-300'
+                          : isSurplus
+                          ? 'bg-emerald-100/70 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                          : isUnspent
+                          ? 'bg-amber-100/70 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                          : 'bg-blue-100/70 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300'
+                      }`}
+                    >
+                      {report.weekIndex < (groceryPlan.totalWeeks || 4) ? (
+                        <span>
+                          {isOver && `Déficit de ${formatCurrency(Math.abs(report.resultingBalance))} descontado da Semana ${report.weekIndex + 1}.`}
+                          {isSurplus && `Sobra de ${formatCurrency(report.resultingBalance)} transferida para a Semana ${report.weekIndex + 1}.`}
+                          {isUnspent && `Sem compras: +${formatCurrency(report.resultingBalance)} acumulados para a Semana ${report.weekIndex + 1}.`}
+                          {!isOver && !isSurplus && !isUnspent && `Meta atingida exatamente. Saldo zerado para a próxima semana.`}
+                        </span>
+                      ) : (
+                        <span>
+                          {isOver && `Saldo final do mês com déficit de ${formatCurrency(Math.abs(report.resultingBalance))}.`}
+                          {isSurplus && `Saldo final do mês com economia de ${formatCurrency(report.resultingBalance)}!`}
+                          {isUnspent && `Sem compras nesta última semana.`}
+                          {!isOver && !isSurplus && !isUnspent && `Fechamento exato na meta.`}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Quick Trip List for this week */}
+                    {hasTrips ? (
+                      <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 space-y-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                          {report.trips.length} compra(s) registrada(s):
+                        </span>
+                        {report.trips.map((t) => (
+                          <div key={t.id} className="flex justify-between items-center text-[11px] text-slate-600 dark:text-slate-300">
+                            <span className="truncate max-w-[120px]">{t.storeName} ({formatDateBR(t.date).slice(0, 5)})</span>
+                            <span className="font-semibold">{formatCurrency(t.totalAmount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const date = `${selectedMonth}-${String(Math.min(28, (report.weekIndex - 1) * 7 + 3)).padStart(2, '0')}`;
+                          setNewTripData({
+                            ...newTripData,
+                            date,
+                            person: currentPerson,
+                            tripType: 'semanal',
+                            weekNumber: report.weekIndex,
+                          });
+                          setIsTripModalOpen(true);
+                        }}
+                        className={`w-full py-1.5 text-[11px] font-semibold bg-white dark:bg-slate-800 border rounded-xl transition-colors text-center block ${
+                          currentPerson === 'Ellen'
+                            ? 'text-pink-600 dark:text-pink-400 hover:bg-pink-50 dark:hover:bg-pink-950/40 border-pink-200 dark:border-pink-900'
+                            : 'text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 border-blue-200 dark:border-blue-900'
+                        }`}
+                      >
+                        + Registrar Compra ({currentPerson})
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Abastecimento Mensal & Compras Extraordinárias */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Ellen's Monthly Abastecimento & Cesta Básica Breakdown */}
             <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
-                    Contribuição Ellen (Mensal)
+                    Planejamento de Supermercado ({p2})
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Planejado: {formatCurrency(ellenPlanned)} | Realizado: {formatCurrency(ellenRealized)}
+                    {groceryPlan.ellenPlanningType === 'semanal'
+                      ? `Modo Semanal: ${groceryPlan.totalWeeks || 4} semanas x ${formatCurrency(groceryPlan.ellenWeeklyPlanned || 80)} = ${formatCurrency(ellenPlanned)}`
+                      : `Aporte Mensal Fixo: ${formatCurrency(ellenPlanned)} | Realizado: ${formatCurrency(monthlyAbastecimentoSpent)}`}
                   </p>
                 </div>
-                <span className="text-xs px-2.5 py-1 rounded-full bg-pink-100 dark:bg-pink-950 text-pink-700 dark:text-pink-300 font-bold">
-                  Valor fixo mensal
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsEllenCestaOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold bg-pink-50 dark:bg-pink-950/60 hover:bg-pink-100 text-pink-700 dark:text-pink-300 border border-pink-200 dark:border-pink-900/60 rounded-xl transition-colors"
+                >
+                  <Gift className="w-3.5 h-3.5" />
+                  <span>Cesta Básica</span>
+                </button>
               </div>
 
-              <div
-                onClick={toggleEllenGrocery}
-                className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                  groceryPlan.ellenCompleted
-                    ? 'bg-pink-50/60 dark:bg-pink-950/30 border-pink-200 dark:border-pink-800/60'
-                    : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800'
-                }`}
-              >
+              <div className="p-4 rounded-xl bg-pink-50/40 dark:bg-pink-950/20 border border-pink-200 dark:border-pink-900/60 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <input
                       type="checkbox"
                       checked={groceryPlan.ellenCompleted}
-                      onChange={() => {}}
+                      onChange={toggleEllenGrocery}
                       className="w-4 h-4 rounded text-pink-600"
                     />
                     <div>
                       <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                        Aporte Único Mensal
+                        Status do Orçamento da {p2}
                       </h4>
                       <p className="text-[11px] text-slate-500">
-                        Transferência integral para custeio de compras do mês
+                        {groceryPlan.ellenCompleted ? 'Aporte / compras concluídas no mês' : 'Em andamento no mês'}
                       </p>
                     </div>
                   </div>
@@ -778,20 +1269,67 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                       {formatCurrency(ellenPlanned)}
                     </span>
                     <span className="block text-[10px] text-slate-400">
-                      {groceryPlan.ellenCompleted ? 'Transferido' : 'Pendente'}
+                      Gasto real Ellen: {formatCurrency(ellenWeeklyAnalysis.totalWeeklySpent + monthlyAbastecimentoSpent)}
                     </span>
                   </div>
                 </div>
+
+                {monthlyAbastecimentoTrips.length > 0 && (
+                  <div className="pt-2 border-t border-pink-200/60 dark:border-pink-900/40 space-y-1">
+                    <span className="text-[10px] font-bold text-slate-500 block uppercase">
+                      Compras mensais vinculadas ({monthlyAbastecimentoTrips.length}):
+                    </span>
+                    {monthlyAbastecimentoTrips.map((t) => (
+                      <div key={t.id} className="flex justify-between items-center text-xs text-slate-700 dark:text-slate-300">
+                        <span>{t.storeName} ({formatDateBR(t.date)})</span>
+                        <span className="font-semibold">{formatCurrency(t.totalAmount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Compras Extraordinárias & Destaques de Economia */}
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    Compras Extraordinárias & Estoque
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Compras fora da rotina ou reposições de grande porte
+                  </p>
+                </div>
+                <span className="text-xs px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-bold">
+                  {formatCurrency(extraordinarySpent)} gasto
+                </span>
               </div>
 
+              {extraordinaryTrips.length === 0 ? (
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+                  Nenhuma compra extraordinária registrada neste mês.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
+                  {extraordinaryTrips.map((t) => (
+                    <div key={t.id} className="flex justify-between items-center p-2.5 rounded-xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 text-xs">
+                      <div>
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">{t.storeName}</span>
+                        <span className="text-[10px] text-slate-400 block">{formatDateBR(t.date)} • {t.person}</span>
+                      </div>
+                      <span className="font-bold text-slate-900 dark:text-slate-100">{formatCurrency(t.totalAmount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Store & Savings Highlights */}
-              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-2">
-                <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                  Resumo de Inteligência de Compras:
-                </h4>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-1.5">
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
-                    <span className="text-slate-500 block text-[11px]">Mercado Mais Utilizado:</span>
+                    <span className="text-slate-500 block text-[11px]">Mercado Mais Frequente:</span>
                     <strong className="text-slate-800 dark:text-slate-200">{mostUsedStore}</strong>
                   </div>
                   <div>
@@ -847,7 +1385,17 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                           <h4 className="font-bold text-slate-900 dark:text-slate-100 text-sm">
                             {trip.storeName}
                           </h4>
-                          {trip.isExtraordinary && (
+                          {trip.tripType === 'semanal' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 font-semibold">
+                              Semanal (Semana {trip.weekNumber || getWeekNumberFromDate(trip.date)})
+                            </span>
+                          )}
+                          {trip.tripType === 'mensal' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-pink-100 dark:bg-pink-950 text-pink-800 dark:text-pink-300 font-semibold">
+                              Mensal (Abastecimento)
+                            </span>
+                          )}
+                          {(trip.isExtraordinary || trip.tripType === 'extraordinaria') && (
                             <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-semibold">
                               Extraordinária
                             </span>
@@ -1002,53 +1550,121 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
       {/* 5D. LISTA DE COMPRAS */}
       {activeSubTab === 'listas' && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                 Listas de Compras Inteligentes
               </h3>
               <p className="text-xs text-slate-500">
-                Compare preços previstos com menores históricos e converta listas diretamente em compras realizadas
+                Copie o modelo padrão, mude o supermercado, edite preços previstos e remova itens com 1 clique
               </p>
             </div>
-            <button
-              onClick={() => setIsListModalOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Criar Nova Lista</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const master = createCarrefourMasterShoppingList(
+                    'LISTA DE COMPRAS - CARREFOUR',
+                    'Carrefour',
+                    selectedMonth
+                  );
+                  addShoppingList(master);
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/60 rounded-xl transition-colors shadow-xs"
+                title="Cria lista padrão completa com os 128 itens do Carrefour"
+              >
+                <ShoppingBag className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>+ Modelo Carrefour (Master)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const items = generateShoppingListFromCestaBasica();
+                  const total = items.reduce((sum, i) => sum + (i.estimatedPrice || 0), 0);
+                  addShoppingList({
+                    name: `Cesta Básica ${p2} (${formatMonthYearBR(selectedMonth)})`,
+                    type: 'reposicao',
+                    monthKey: selectedMonth,
+                    createdAt: new Date().toISOString().slice(0, 10),
+                    estimatedTotal: total,
+                    items,
+                  });
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-pink-50 dark:bg-pink-950/60 hover:bg-pink-100 text-pink-700 dark:text-pink-300 border border-pink-200 dark:border-pink-900/60 rounded-xl transition-colors"
+                title="Cria lista já preenchida com os itens da Cesta Básica da Ellen"
+              >
+                <Gift className="w-3.5 h-3.5" />
+                <span>+ Lista Cesta Ellen</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  generateAutoShoppingListFromStock();
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/60 rounded-xl transition-colors"
+                title="Gera lista com base nos itens de estoque que precisam de reposição"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Reposição Estoque</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingShoppingList(null);
+                  setIsEditListModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Nova Lista Personalizada</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {shoppingLists.map((list) => {
               const completedCount = list.items.filter((i) => i.completed).length;
               const progressPct = list.items.length > 0 ? (completedCount / list.items.length) * 100 : 0;
-              const totalEst = list.items.reduce((sum, i) => sum + (i.estimatedPrice || 0), 0);
+              const totalEst = list.items.reduce((sum, i) => sum + (i.estimatedPrice || (i.quantity * (i.lastPricePaid || 0)) || 0), 0);
 
               return (
                 <div
                   key={list.id}
-                  className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs"
+                  className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
                 >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        <h4 className="font-bold text-slate-900 dark:text-slate-100 text-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <h4 className="font-bold text-slate-900 dark:text-slate-100 text-sm truncate">
                           {list.name}
                         </h4>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold uppercase">
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold uppercase shrink-0">
                           {list.type}
                         </span>
                       </div>
                       <span className="text-xs text-slate-400 mt-1 block">
-                        Criada em: {formatDateBR(list.createdAt)} • Total Previsto: <strong>{formatCurrency(totalEst)}</strong>
+                        Criada em: {formatDateBR(list.createdAt)} • {list.items.length} itens • Total Previsto: <strong className="text-slate-800 dark:text-slate-200">{formatCurrency(totalEst)}</strong>
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
+                        type="button"
+                        onClick={() => {
+                          setEditingShoppingList(list);
+                          setIsEditListModalOpen(true);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        title="Editar lista, mudar mercado, alterar preços e produtos"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => copyShoppingList(list.id)}
                         className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                         title="Duplicar lista"
@@ -1056,9 +1672,13 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                         <Copy className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={() => deleteShoppingList(list.id)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                        title="Excluir lista"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setListToDelete(list);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                        title="Excluir lista de compras"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1069,7 +1689,7 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                   <div className="space-y-1">
                     <div className="flex justify-between text-[11px] text-slate-500">
                       <span>Progresso da compra</span>
-                      <span>{completedCount} de {list.items.length} itens</span>
+                      <span>{completedCount} de {list.items.length} itens marcados</span>
                     </div>
                     <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
                       <div
@@ -1079,58 +1699,131 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                     </div>
                   </div>
 
-                  {/* Item Rows */}
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {/* Item Rows with direct price edit & delete */}
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
                     {list.items.map((item) => (
                       <div
                         key={item.id}
-                        onClick={() => {
-                          updateShoppingList(list.id, {
-                            items: list.items.map((i) =>
-                              i.id === item.id ? { ...i, completed: !i.completed } : i
-                            ),
-                          });
-                        }}
-                        className={`flex items-center justify-between p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${
+                        className={`flex items-center justify-between p-2 rounded-xl border text-xs transition-all ${
                           item.completed
-                            ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/40 text-slate-400 line-through'
-                            : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200'
+                            ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200/70 dark:border-emerald-900/40 text-slate-400 line-through'
+                            : 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 hover:border-emerald-300'
                         }`}
                       >
-                        <div className="flex items-center gap-2">
+                        {/* Item toggle & title */}
+                        <div
+                          onClick={() => {
+                            updateShoppingList(list.id, {
+                              items: list.items.map((i) =>
+                                i.id === item.id ? { ...i, completed: !i.completed } : i
+                              ),
+                            });
+                          }}
+                          className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
+                        >
                           <input
                             type="checkbox"
                             checked={item.completed}
                             onChange={() => {}}
-                            className="w-3.5 h-3.5 rounded text-emerald-600"
+                            className="w-3.5 h-3.5 rounded text-emerald-600 cursor-pointer"
                           />
-                          <span className="font-semibold">{item.product}</span>
-                          <span className="text-[10px] text-slate-400">({item.quantity} {item.unit})</span>
+                          <span className="font-semibold truncate">{item.product}</span>
+                          <span className="text-[10px] text-slate-400 shrink-0">
+                            ({item.quantity} {item.unit})
+                          </span>
+                          {item.categoryGroup && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hidden sm:inline shrink-0">
+                              {item.categoryGroup}
+                            </span>
+                          )}
+                          {item.source === 'cesta_basica' && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-pink-100 dark:bg-pink-950 text-pink-700 dark:text-pink-300 font-bold shrink-0">
+                              📦 Cesta
+                            </span>
+                          )}
+                          {item.source === 'reposicao_estoque' && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold shrink-0">
+                              🔄 Estoque
+                            </span>
+                          )}
                         </div>
-                        <div className="flex items-center gap-2">
+
+                        {/* Store badge, Price & 1-Click Remove */}
+                        <div className="flex items-center gap-1.5 shrink-0">
                           {item.preferredStore && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
                               {item.preferredStore}
                             </span>
                           )}
-                          <span className="font-bold">
-                            {formatCurrency(item.estimatedPrice || 0)}
+                          <span className="font-bold text-xs">
+                            {formatCurrency(item.actualPricePaid || item.estimatedPrice || (item.quantity * (item.lastPricePaid || 0)) || 0)}
                           </span>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const updatedItems = list.items.filter((i) => i.id !== item.id);
+                              const newEst = updatedItems.reduce(
+                                (sum, i) => sum + (i.estimatedPrice || (i.quantity * (i.lastPricePaid || 0)) || 0),
+                                0
+                              );
+                              updateShoppingList(list.id, {
+                                items: updatedItems,
+                                estimatedTotal: newEst,
+                              });
+                            }}
+                            className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                            title="Remover este produto da lista"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
                     ))}
                   </div>
 
-                  {/* Action: Convert to registered trip */}
-                  <button
-                    onClick={() => {
-                      convertShoppingListToTrip(list.id, 'Assaí', 'Família', 'debito');
-                    }}
-                    className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400 text-xs font-semibold border border-slate-200 dark:border-slate-700 transition-colors"
-                  >
-                    <ArrowRight className="w-3.5 h-3.5" />
-                    <span>Finalizar & Converter em Compra Registrada</span>
-                  </button>
+                  {/* Action Buttons */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLiveMarketList(list);
+                        setIsLiveMarketOpen(true);
+                      }}
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-colors"
+                      title="Abrir Modo Mercado Ao Vivo em tela cheia / modal"
+                    >
+                      <ShoppingCart className="w-3.5 h-3.5" />
+                      <span>Modo Mercado</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const origin = window.location.origin;
+                        const path = window.location.pathname;
+                        const url = `${origin}${path}?mode=live-market&listId=${encodeURIComponent(list.id)}`;
+                        window.open(url, 'LiveMarketAppWindow', 'width=480,height=860,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes');
+                      }}
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-xs font-semibold border border-blue-200 dark:border-blue-800 transition-colors"
+                      title="Abre em janela popup dedicada para celular no supermercado"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Nova Janela</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingShoppingList(list);
+                        setIsEditListModalOpen(true);
+                      }}
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 transition-colors"
+                      title="Editar mercado, preços e produtos desta lista"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Editar Lista</span>
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -1223,19 +1916,41 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm">
-                    Cesta Básica Mensal (Ellen)
+                    Cesta Básica Mensal ({p2})
                   </h3>
                   <p className="text-xs text-slate-600 dark:text-slate-300">
-                    Alívio direto de despesas de mercearia, arroz, feijão, café e óleo
+                    Alívio direto de despesas de mercearia, arroz, feijão, café, óleo e itens essenciais
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
-                  onClick={() => setIsCestaModalOpen(true)}
-                  className="px-3.5 py-1.5 text-xs font-semibold bg-pink-600 hover:bg-pink-700 text-white rounded-xl transition-colors"
+                  type="button"
+                  onClick={() => {
+                    const items = generateShoppingListFromCestaBasica();
+                    const total = items.reduce((sum, i) => sum + (i.estimatedPrice || 0), 0);
+                    addShoppingList({
+                      name: `Cesta Básica ${p2} (${formatMonthYearBR(selectedMonth)})`,
+                      type: 'reposicao',
+                      monthKey: selectedMonth,
+                      createdAt: new Date().toISOString().slice(0, 10),
+                      estimatedTotal: total,
+                      items,
+                    });
+                    setActiveSubTab('listas');
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold bg-white dark:bg-slate-800 text-pink-700 dark:text-pink-300 border border-pink-200 dark:border-pink-900/60 rounded-xl hover:bg-pink-50 transition-colors flex items-center gap-1.5"
                 >
-                  + Registrar Cesta
+                  <ShoppingCart className="w-3.5 h-3.5" />
+                  <span>Gerar Lista da Cesta</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEllenCestaOpen(true)}
+                  className="px-3.5 py-1.5 text-xs font-bold bg-pink-600 hover:bg-pink-700 text-white rounded-xl shadow-2xs transition-colors flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Preencher Cesta ({p2})</span>
                 </button>
               </div>
             </div>
@@ -1264,32 +1979,51 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
 
           {/* Stock Items with duration and next purchase prediction */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  Itens com Periodicidade Longa (Estoque Preventivo)
+                  Balanço & Reposição de Estoque Preventivo
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Previsão de reposição para ração pet, papel higiênico, sabão em pó e produtos de limpeza
+                  Compara compras passadas e frequência de uso para estimar exatamente quando comprar novamente
                 </p>
               </div>
-              <button
-                onClick={() => setIsStockModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Adicionar Item</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    generateAutoShoppingListFromStock();
+                    setActiveSubTab('listas');
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/60 rounded-xl transition-colors"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Gerar Lista de Reposição</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsStockModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Adicionar Item</span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {stockItems.map((item) => {
-                const isLow = item.status === 'baixo';
+                const analysis = analyzeStockItem(item, groceryTrips);
+                const isUrgent = analysis.urgencyLevel === 'alta';
+                const isMedium = analysis.urgencyLevel === 'media';
+
                 return (
                   <div
                     key={item.id}
                     className={`p-4 rounded-2xl bg-white dark:bg-slate-900 border space-y-3 shadow-xs ${
-                      isLow
+                      isUrgent
+                        ? 'border-red-300 dark:border-red-800/80 ring-1 ring-red-400/30'
+                        : isMedium
                         ? 'border-amber-300 dark:border-amber-800/80 ring-1 ring-amber-400/30'
                         : 'border-slate-200 dark:border-slate-800'
                     }`}
@@ -1305,26 +2039,34 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                       </div>
                       <span
                         className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                          isLow
+                          isUrgent
+                            ? 'bg-red-100 dark:bg-red-950 text-red-800 dark:text-red-300'
+                            : isMedium
                             ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300'
                             : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
                         }`}
                       >
-                        {item.status}
+                        {isUrgent ? 'Repor Já' : isMedium ? 'Repor Próx. Compra' : 'Estoque OK'}
                       </span>
                     </div>
 
                     <div className="text-xs space-y-1.5 text-slate-500 pt-1 border-t border-slate-100 dark:border-slate-800">
                       <div className="flex justify-between">
-                        <span>Duração média:</span>
+                        <span>Dias restantes estimados:</span>
+                        <strong className={`font-bold ${isUrgent ? 'text-red-600' : isMedium ? 'text-amber-600' : 'text-slate-800 dark:text-slate-200'}`}>
+                          ~{analysis.daysRemaining} dias
+                        </strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Consumo estimado:</span>
                         <strong className="text-slate-800 dark:text-slate-200">
-                          {item.estimatedDurationDays} dias
+                          ~{analysis.weeklyConsumptionRate.toFixed(1)} {item.unit}/sem
                         </strong>
                       </div>
                       <div className="flex justify-between">
                         <span>Próxima compra prevista:</span>
                         <strong className="text-emerald-600 dark:text-emerald-400">
-                          {formatDateBR(item.nextPurchasePredictedDate)}
+                          {formatDateBR(analysis.projectedRunoutDate)}
                         </strong>
                       </div>
                       <div className="flex justify-between">
@@ -1337,15 +2079,17 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
 
                     <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
                       <button
+                        type="button"
                         onClick={() => {
                           const next = item.status === 'suficiente' ? 'baixo' : 'suficiente';
                           updateStockItem(item.id, { status: next });
                         }}
                         className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline"
                       >
-                        Alternar status
+                        Alternar status ({item.status})
                       </button>
                       <button
+                        type="button"
                         onClick={() => deleteStockItem(item.id)}
                         className="text-slate-400 hover:text-red-600 p-1"
                         title="Excluir item"
@@ -1366,9 +2110,14 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl p-6 space-y-4 shadow-xl my-8">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">
-                Registrar Compra de Supermercado
-              </h3>
+              <div>
+                <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">
+                  Registrar Compra de Supermercado
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Informe o valor real da compra e o tipo (semanal com rolagem, abastecimento mensal ou extraordinária).
+                </p>
+              </div>
               <button
                 onClick={() => setIsTripModalOpen(false)}
                 className="text-slate-400 hover:text-slate-600 text-sm font-bold"
@@ -1378,6 +2127,88 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
             </div>
 
             <form onSubmit={handleSaveTrip} className="space-y-4">
+              {/* Trip Type and Week Selector */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                  Tipo de Compra & Meta Associada
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setNewTripData({ ...newTripData, tripType: 'semanal', isExtraordinary: false })}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      newTripData.tripType === 'semanal'
+                        ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-400 dark:border-blue-600 text-blue-900 dark:text-blue-200 font-bold shadow-2xs'
+                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Compra Semanal</span>
+                      {newTripData.tripType === 'semanal' && <span className="text-blue-600 text-xs">●</span>}
+                    </div>
+                    <span className="text-[10px] font-normal opacity-80 block mt-0.5">
+                      Compensa na meta semanal com rolagem
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewTripData({ ...newTripData, tripType: 'mensal', isExtraordinary: false })}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      newTripData.tripType === 'mensal'
+                        ? 'bg-pink-50 dark:bg-pink-950/60 border-pink-400 dark:border-pink-600 text-pink-900 dark:text-pink-200 font-bold shadow-2xs'
+                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Abastecimento Mensal</span>
+                      {newTripData.tripType === 'mensal' && <span className="text-pink-600 text-xs">●</span>}
+                    </div>
+                    <span className="text-[10px] font-normal opacity-80 block mt-0.5">
+                      Grande compra mensal (Ellen)
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewTripData({ ...newTripData, tripType: 'extraordinaria', isExtraordinary: true })}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      newTripData.tripType === 'extraordinaria'
+                        ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-400 dark:border-amber-600 text-amber-900 dark:text-amber-200 font-bold shadow-2xs'
+                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>Extraordinária</span>
+                      {newTripData.tripType === 'extraordinaria' && <span className="text-amber-600 text-xs">●</span>}
+                    </div>
+                    <span className="text-[10px] font-normal opacity-80 block mt-0.5">
+                      Reposição pontual / festa
+                    </span>
+                  </button>
+                </div>
+
+                {newTripData.tripType === 'semanal' && (
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-700/60 flex items-center gap-2">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                      Competência da Semana:
+                    </label>
+                    <select
+                      value={newTripData.weekNumber}
+                      onChange={(e) => setNewTripData({ ...newTripData, weekNumber: Number(e.target.value) })}
+                      className="p-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 text-xs font-bold"
+                    >
+                      <option value={1}>Semana 1 (Dias 01 a 07)</option>
+                      <option value={2}>Semana 2 (Dias 08 a 14)</option>
+                      <option value={3}>Semana 3 (Dias 15 a 21)</option>
+                      <option value={4}>Semana 4 (Dias 22 a 28)</option>
+                      {groceryPlan.totalWeeks === 5 && <option value={5}>Semana 5 (Dias 29 em diante)</option>}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Basic Trip Info */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div>
                   <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
@@ -1386,7 +2217,15 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                   <input
                     type="date"
                     value={newTripData.date}
-                    onChange={(e) => setNewTripData({ ...newTripData, date: e.target.value })}
+                    onChange={(e) => {
+                      const d = e.target.value;
+                      const calculatedWeek = getWeekNumberFromDate(d);
+                      setNewTripData({
+                        ...newTripData,
+                        date: d,
+                        weekNumber: newTripData.tripType === 'semanal' ? calculatedWeek : newTripData.weekNumber,
+                      });
+                    }}
                     className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
                     required
                   />
@@ -1394,18 +2233,26 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
 
                 <div>
                   <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
-                    Mercado
+                    Mercado / Estabelecimento
                   </label>
-                  <select
+                  <input
+                    type="text"
+                    list="grocery-stores-list"
                     value={newTripData.storeName}
                     onChange={(e) => setNewTripData({ ...newTripData, storeName: e.target.value })}
+                    placeholder="Ex: Assaí, Carrefour, Feira..."
                     className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="Assaí">Assaí</option>
-                    <option value="Carrefour">Carrefour</option>
-                    <option value="Sonda">Sonda</option>
-                    <option value="Outros">Outros</option>
-                  </select>
+                    required
+                  />
+                  <datalist id="grocery-stores-list">
+                    <option value="Assaí" />
+                    <option value="Carrefour" />
+                    <option value="Sonda" />
+                    <option value="Pão de Açúcar" />
+                    <option value="Feira Livre" />
+                    <option value="Hortifruti" />
+                    <option value="Atacadão" />
+                  </datalist>
                 </div>
 
                 <div>
@@ -1418,13 +2265,40 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                     className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
                   >
                     <option value="Família">Família</option>
-                    <option value="Ricardo">Ricardo</option>
-                    <option value="Ellen">Ellen</option>
+                    <option value="Ricardo">{p1}</option>
+                    <option value="Ellen">{p2}</option>
                   </select>
                 </div>
               </div>
 
+              {/* Direct Amount & Payment */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="block text-slate-600 dark:text-slate-300 font-bold mb-1 text-emerald-700 dark:text-emerald-400">
+                    Valor Real Total Gasto (R$)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder={
+                      newTripData.items.filter((i) => i.name.trim()).length > 0
+                        ? formatCurrency(
+                            newTripData.items.reduce(
+                              (sum, i) => sum + (Number(i.quantity) || 1) * (Number(i.unitPrice) || 0),
+                              0
+                            )
+                          )
+                        : '0,00'
+                    }
+                    value={newTripData.manualTotalAmount}
+                    onChange={(e) => setNewTripData({ ...newTripData, manualTotalAmount: e.target.value })}
+                    className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border-2 border-emerald-300 dark:border-emerald-700 text-slate-900 dark:text-slate-100 font-bold text-sm"
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    Digite o valor da nota ou use os itens abaixo
+                  </span>
+                </div>
+
                 <div>
                   <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
                     Forma de Pagamento
@@ -1444,7 +2318,7 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
 
                 <div>
                   <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
-                    Economia Promoções (R$)
+                    Economia Promoções / App (R$)
                   </label>
                   <input
                     type="number"
@@ -1455,28 +2329,19 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                     className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
                   />
                 </div>
-
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
-                    Economia App / Cartão (R$)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={newTripData.appOrCpfSavings || ''}
-                    onChange={(e) => setNewTripData({ ...newTripData, appOrCpfSavings: Number(e.target.value) })}
-                    placeholder="0,00"
-                    className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
-                  />
-                </div>
               </div>
 
-              {/* Items Section */}
+              {/* Optional Items Section */}
               <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    Itens da Compra (Produtos Detalhados)
-                  </label>
+                  <div>
+                    <label className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                      Itens Detalhados (Opcional)
+                    </label>
+                    <span className="text-[10px] text-slate-500">
+                      Adicione itens para histórico de preços e comparação entre mercados
+                    </span>
+                  </div>
                   <button
                     type="button"
                     onClick={() =>
@@ -1494,7 +2359,7 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                   </button>
                 </div>
 
-                <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                <div className="max-h-40 overflow-y-auto space-y-2 pr-1">
                   {newTripData.items.map((item, idx) => (
                     <div key={idx} className="grid grid-cols-12 gap-2 text-xs items-center">
                       <div className="col-span-4">
@@ -1508,7 +2373,6 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                             setNewTripData({ ...newTripData, items: copy });
                           }}
                           className="w-full p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
-                          required
                         />
                       </div>
 
@@ -1533,12 +2397,14 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                       <div className="col-span-2">
                         <input
                           type="number"
-                          step="0.1"
+                          step="any"
+                          min="0.001"
                           placeholder="Qtd"
                           value={item.quantity}
                           onChange={(e) => {
                             const copy = [...newTripData.items];
-                            copy[idx].quantity = Number(e.target.value);
+                            const val = parseFloat(e.target.value.replace(',', '.'));
+                            copy[idx].quantity = isNaN(val) ? 1 : val;
                             setNewTripData({ ...newTripData, items: copy });
                           }}
                           className="w-full p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
@@ -1549,11 +2415,13 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                         <input
                           type="number"
                           step="0.01"
+                          min="0"
                           placeholder="Preço R$"
                           value={item.unitPrice || ''}
                           onChange={(e) => {
                             const copy = [...newTripData.items];
-                            copy[idx].unitPrice = Number(e.target.value);
+                            const val = parseFloat(e.target.value.replace(',', '.'));
+                            copy[idx].unitPrice = isNaN(val) ? 0 : Number(val.toFixed(2));
                             setNewTripData({ ...newTripData, items: copy });
                           }}
                           className="w-full p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
@@ -1581,13 +2449,14 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
 
               <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-3">
                 <div className="text-xs">
-                  <span className="text-slate-500">Total Calculado: </span>
+                  <span className="text-slate-500">Valor Final: </span>
                   <strong className="text-sm text-emerald-600 dark:text-emerald-400">
                     {formatCurrency(
-                      newTripData.items.reduce(
-                        (sum, i) => sum + (Number(i.quantity) || 1) * (Number(i.unitPrice) || 0),
-                        0
-                      )
+                      parseFloat(newTripData.manualTotalAmount.replace(',', '.')) ||
+                        newTripData.items.reduce(
+                          (sum, i) => sum + (Number(i.quantity) || 1) * (Number(i.unitPrice) || 0),
+                          0
+                        )
                     )}
                   </strong>
                 </div>
@@ -1613,161 +2482,18 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
         </div>
       )}
 
-      {/* MODAL: NOVA LISTA DE COMPRAS */}
-      {isListModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-xl p-6 space-y-4 shadow-xl my-8">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">
-                Criar Nova Lista de Compras
-              </h3>
-              <button
-                onClick={() => setIsListModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveShoppingList} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
-                    Nome da Lista
-                  </label>
-                  <input
-                    type="text"
-                    value={newListData.name}
-                    onChange={(e) => setNewListData({ ...newListData, name: e.target.value })}
-                    className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-600 dark:text-slate-300 font-semibold mb-1">
-                    Tipo de Lista
-                  </label>
-                  <select
-                    value={newListData.type}
-                    onChange={(e) => setNewListData({ ...newListData, type: e.target.value as any })}
-                    className="w-full p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="semanal">Semanal (Hortifruti & Feira)</option>
-                    <option value="mensal">Mensal (Atacado & Limpeza)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Items Section */}
-              <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    Itens da Lista
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setNewListData({
-                        ...newListData,
-                        items: [
-                          ...newListData.items,
-                          { product: '', quantity: 1, unit: 'kg', category: 'Frutas, verduras e legumes', priority: 'Alta', preferredStore: 'Carrefour', estimatedPrice: 0 },
-                        ],
-                      })
-                    }
-                    className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
-                  >
-                    + Adicionar Item
-                  </button>
-                </div>
-
-                <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
-                  {newListData.items.map((item, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 text-xs items-center">
-                      <div className="col-span-5">
-                        <input
-                          type="text"
-                          placeholder="Produto"
-                          value={item.product}
-                          onChange={(e) => {
-                            const copy = [...newListData.items];
-                            copy[idx].product = e.target.value;
-                            setNewListData({ ...newListData, items: copy });
-                          }}
-                          className="w-full p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
-                          required
-                        />
-                      </div>
-
-                      <div className="col-span-2">
-                        <input
-                          type="number"
-                          step="0.5"
-                          placeholder="Qtd"
-                          value={item.quantity}
-                          onChange={(e) => {
-                            const copy = [...newListData.items];
-                            copy[idx].quantity = Number(e.target.value);
-                            setNewListData({ ...newListData, items: copy });
-                          }}
-                          className="w-full p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
-                        />
-                      </div>
-
-                      <div className="col-span-4">
-                        <select
-                          value={item.preferredStore}
-                          onChange={(e) => {
-                            const copy = [...newListData.items];
-                            copy[idx].preferredStore = e.target.value;
-                            setNewListData({ ...newListData, items: copy });
-                          }}
-                          className="w-full p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
-                        >
-                          <option value="Assaí">Assaí</option>
-                          <option value="Carrefour">Carrefour</option>
-                          <option value="Sonda">Sonda</option>
-                        </select>
-                      </div>
-
-                      <div className="col-span-1 text-right">
-                        {newListData.items.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const copy = newListData.items.filter((_, i) => i !== idx);
-                              setNewListData({ ...newListData, items: copy });
-                            }}
-                            className="text-slate-400 hover:text-red-600 p-1"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 border-t border-slate-100 dark:border-slate-800 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setIsListModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors"
-                >
-                  Salvar Lista
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* MODAL: CRIAR / EDITAR / COPIAR LISTA DE COMPRAS */}
+      {isEditListModalOpen && (
+        <ShoppingListEditModal
+          isOpen={isEditListModalOpen}
+          onClose={() => {
+            setIsEditListModalOpen(false);
+            setEditingShoppingList(null);
+          }}
+          onSave={handleSaveEditedShoppingList}
+          initialList={editingShoppingList}
+          selectedMonth={selectedMonth}
+        />
       )}
 
       {/* MODAL: NOVO ITEM DE ESTOQUE */}
@@ -1927,6 +2653,203 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* MODAL: CONFIGURAR METAS DO SUPERMERCADO */}
+      {isGoalModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">
+                  Configurar Metas de Supermercado
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Ajuste o orçamento mensal e os valores semanais para {formatMonthYearBR(selectedMonth)}.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsGoalModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-200 font-bold mb-1">
+                    Meta Total Mensal de Supermercado (R$)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={tempGoals.monthlyGoal}
+                    onChange={(e) => setTempGoals({ ...tempGoals, monthlyGoal: Number(e.target.value) })}
+                    className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 font-bold text-sm"
+                  />
+                  <span className="text-[10px] text-slate-500 block mt-1">
+                    Teto máximo do orçamento do mês
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
+                  <div>
+                    <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
+                      Meta Semanal Base ({p1}) (R$)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={tempGoals.ricardoWeekly}
+                      onChange={(e) => setTempGoals({ ...tempGoals, ricardoWeekly: Number(e.target.value) })}
+                      className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 font-semibold"
+                    />
+                    <span className="text-[10px] text-slate-500 block mt-1">
+                      Valor por semana (ex: R$ 150)
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
+                      Aporte Mensal ({p2}) (R$)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={tempGoals.ellenMonthly}
+                      onChange={(e) => setTempGoals({ ...tempGoals, ellenMonthly: Number(e.target.value) })}
+                      className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 font-semibold"
+                    />
+                    <span className="text-[10px] text-slate-500 block mt-1">
+                      Abastecimento mensal
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                  <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
+                    Número de Semanas do Mês
+                  </label>
+                  <select
+                    value={tempGoals.totalWeeks}
+                    onChange={(e) => setTempGoals({ ...tempGoals, totalWeeks: Number(e.target.value) })}
+                    className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 font-semibold"
+                  >
+                    <option value={4}>4 Semanas (Padrão)</option>
+                    <option value={5}>5 Semanas (Meses longos)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 text-blue-900 dark:text-blue-200 text-xs">
+                <p className="font-semibold mb-1">💡 Como funciona a rolagem semanal:</p>
+                <p className="text-[11px] leading-relaxed text-blue-800/90 dark:text-blue-300/90">
+                  Se você gastar a mais ou a menos em uma semana (ex: gastou R$ 330 numa meta de R$ 150), o saldo restante acumula ou desconta automaticamente na meta da semana seguinte!
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsGoalModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateGroceryPlanSettings({
+                      monthlyGoal: Number(tempGoals.monthlyGoal),
+                      ricardoWeeklyPlanned: Number(tempGoals.ricardoWeekly),
+                      ellenMonthlyPlanned: Number(tempGoals.ellenMonthly),
+                      totalWeeks: Number(tempGoals.totalWeeks),
+                    });
+                    setIsGoalModalOpen(false);
+                  }}
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors"
+                >
+                  Salvar Metas
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Live Market Mode Modal */}
+      {isLiveMarketOpen && liveMarketList && (
+        <LiveMarketModal
+          isOpen={isLiveMarketOpen}
+          onClose={() => {
+            setIsLiveMarketOpen(false);
+            setLiveMarketList(null);
+          }}
+          list={liveMarketList}
+          onUpdateList={(updatedItems) => {
+            if (liveMarketList) {
+              updateShoppingList(liveMarketList.id, { items: updatedItems });
+              setLiveMarketList({ ...liveMarketList, items: updatedItems });
+            }
+          }}
+          onFinalizeTrip={({ listId, storeName, totalAmount, person, paymentMethod, tripType, weekNumber, savingsAmount, items }) => {
+            convertShoppingListToTrip(listId, storeName, person, paymentMethod, totalAmount, tripType, weekNumber, savingsAmount, items);
+            setIsLiveMarketOpen(false);
+            setLiveMarketList(null);
+          }}
+        />
+      )}
+
+      {/* Ellen Cesta Básica Modal */}
+      {isEllenCestaOpen && (
+        <EllenCestaBasicaModal
+          isOpen={isEllenCestaOpen}
+          onClose={() => setIsEllenCestaOpen(false)}
+          onSave={(record) => {
+            addCestaBasicaRecord(record);
+            setIsEllenCestaOpen(false);
+          }}
+        />
+      )}
+
+      {/* Delete Shopping List Confirmation Modal */}
+      {listToDelete && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600 dark:text-red-400">
+              <div className="p-2.5 rounded-xl bg-red-100 dark:bg-red-950/50">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-slate-900 dark:text-slate-100">Excluir Lista de Compras?</h4>
+                <p className="text-xs text-slate-500">Esta ação não pode ser desfeita.</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Tem certeza que deseja excluir permanentemente a lista <strong>{listToDelete.name}</strong> ({listToDelete.items.length} itens cadastrados)?
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setListToDelete(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  deleteShoppingList(listToDelete.id);
+                  setListToDelete(null);
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-xs transition-colors"
+              >
+                Sim, Excluir Lista
+              </button>
+            </div>
           </div>
         </div>
       )}

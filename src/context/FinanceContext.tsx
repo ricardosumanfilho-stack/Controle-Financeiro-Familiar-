@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode } from 'react';
 import {
   ActiveTab,
+  CardSubscription,
   CestaBasicaRecord,
   Cofrinho,
   CofrinhoMovement,
@@ -30,6 +31,7 @@ import {
 } from '../types';
 import {
   INITIAL_CARDS,
+  INITIAL_CARD_SUBSCRIPTIONS,
   INITIAL_CESTA_BASICA_RECORDS,
   INITIAL_COFRINHOS,
   INITIAL_COFRINHO_MOVEMENTS,
@@ -49,9 +51,11 @@ import {
   INITIAL_FUTURE_RENT_SETTINGS,
   INITIAL_CLOSING_CHECKLISTS,
 } from '../data/initialData';
-import { addMonthsToKey, classifyIncomeCategory, getMonthKey, getWeeksInMonth } from '../utils/formatters';
+import { addMonthsToKey, calculateCardCompetenceMonth, classifyIncomeCategory, getMonthKey, getWeeksInMonth } from '../utils/formatters';
 import { calculateMonthlyYieldDetails, calculateAnnualRate } from '../utils/yieldCalculations';
 import { exportFullWorkbookExcel } from '../utils/excelExport';
+import { generateSmartShoppingListFromStock } from '../utils/stockReplenishment';
+import { createCarrefourMasterShoppingList } from '../data/carrefourMasterList';
 
 export interface CardInvoiceSummary {
   card: CreditCard;
@@ -67,6 +71,8 @@ export interface CardInvoiceSummary {
     person: Person;
     date: string;
     installmentInfo?: { current: number; total: number };
+    isCardSubscription?: boolean;
+    subscriptionId?: string;
     isDemo?: boolean;
   }[];
 }
@@ -81,6 +87,7 @@ interface FinanceContextType {
   // Data
   transactions: Transaction[];
   cards: CreditCard[];
+  cardSubscriptions: CardSubscription[];
   cofrinhos: Cofrinho[];
   cofrinhoMovements: CofrinhoMovement[];
   installmentPurchases: InstallmentPurchase[];
@@ -90,6 +97,13 @@ interface FinanceContextType {
   stockItems: StockItem[];
   cestaBasicaRecords: CestaBasicaRecord[];
   salarySettings: SalarySettings;
+  person1Name: string;
+  person2Name: string;
+  customCategories: {
+    despesa: string[];
+    receita: string[];
+  };
+  addCustomCategory: (type: 'despesa' | 'receita', category: string) => void;
   investmentContributions: InvestmentContribution[];
   emergencyContributions: EmergencyFundContribution[];
   emergencySettings: EmergencyFundSettings;
@@ -111,23 +125,32 @@ interface FinanceContextType {
   deleteTransaction: (id: string) => void;
   toggleTransactionPaid: (id: string) => void;
 
-  // Cards & Installments CRUD
+  // Cards & Installments & Subscriptions CRUD
   addCard: (card: Omit<CreditCard, 'id'>) => void;
   updateCard: (id: string, card: Partial<CreditCard>) => void;
   deleteCard: (id: string) => void;
   addInstallmentPurchase: (purchase: Omit<InstallmentPurchase, 'id'>) => void;
   updateInstallmentPurchase: (id: string, purchase: Partial<InstallmentPurchase>) => void;
   deleteInstallmentPurchase: (id: string) => void;
+  deleteInstallmentFromMonth: (purchaseId: string, fromCurrentInstallment: number) => void;
   earlyPayInstallment: (id: string, count?: number) => void;
+
+  // Assinaturas Recorrentes no Cartão
+  addCardSubscription: (subscription: Omit<CardSubscription, 'id'>) => void;
+  updateCardSubscription: (id: string, subscription: Partial<CardSubscription>) => void;
+  deleteCardSubscription: (id: string) => void;
 
   // Cofrinhos CRUD & Gestão Estrutural
   addCofrinho: (cofrinho: Omit<Cofrinho, 'id'>) => void;
   updateCofrinho: (id: string, cofrinho: Partial<Cofrinho>) => void;
+  adjustCofrinhoBalance: (id: string, newCurrentBalance: number, newInitialBalance?: number) => void;
+  recalculateCofrinhoBalancesFromMovements: () => void;
+  resetAllCofrinhosToZero: () => void;
   deleteCofrinho: (id: string) => void;
   addCofrinhoMovement: (
     movementOrId: string | Omit<CofrinhoMovement, 'id'>,
     optionalMovement?: Omit<CofrinhoMovement, 'id' | 'cofrinhoId'>
-  ) => void;
+  ) => CofrinhoMovement;
   deleteCofrinhoMovement: (id: string) => void;
   transferBetweenCofrinhos: (
     fromCofrinhoId: string,
@@ -178,21 +201,30 @@ interface FinanceContextType {
   setGroceryPlanningMode: (mode: 'opcao_a' | 'opcao_b') => void;
   toggleRicardoWeek: (weekIndex: number) => void;
   updateRicardoWeekAmount: (weekIndex: number, amount: number) => void;
+  toggleEllenWeek: (weekIndex: number) => void;
+  updateEllenWeekAmount: (weekIndex: number, amount: number) => void;
   toggleEllenGrocery: () => void;
   updateEllenGroceryAmount: (amount: number) => void;
   groceryMonthlyGoal: number;
   setGroceryMonthlyGoal: (goal: number) => void;
+  updateGroceryPlanSettings: (settings: Partial<GroceryMonthPlan>) => void;
 
   // Shopping Lists CRUD & Conversions
   addShoppingList: (list: Omit<ShoppingList, 'id'>) => void;
   updateShoppingList: (id: string, list: Partial<ShoppingList>) => void;
   deleteShoppingList: (id: string) => void;
   copyShoppingList: (id: string) => void;
+  generateAutoShoppingListFromStock: () => void;
   convertShoppingListToTrip: (
     listId: string,
     storeName: string,
     person: Person,
-    paymentMethod: PaymentMethod
+    paymentMethod: PaymentMethod,
+    totalAmount?: number,
+    tripType?: 'semanal' | 'mensal' | 'extraordinaria',
+    weekNumber?: number,
+    savingsAmount?: number,
+    customItems?: ShoppingListItem[]
   ) => void;
 
   // Stock Items CRUD
@@ -222,6 +254,12 @@ interface FinanceContextType {
   renovationCreditTotal: number;
   renovationCredit: number;
 
+  // Theme
+  theme: 'light' | 'dark';
+  isDarkMode: boolean;
+  toggleTheme: () => void;
+  setTheme: (theme: 'light' | 'dark') => void;
+
   // Export & Import
   exportBackupJSON: () => void;
   importBackupJSON: (jsonString: string) => boolean;
@@ -231,8 +269,10 @@ interface FinanceContextType {
 }
 
 const STORAGE_KEYS = {
+  THEME: 'fin_family_theme',
   TRANSACTIONS: 'fin_family_transactions_v2',
   CARDS: 'fin_family_cards_v2',
+  CARD_SUBSCRIPTIONS: 'fin_family_card_subscriptions_v2',
   COFRINHOS: 'fin_family_cofrinhos_v2',
   COFRINHO_MOVEMENTS: 'fin_family_cof_movements_v2',
   INSTALLMENTS: 'fin_family_installments_v2',
@@ -252,12 +292,47 @@ const STORAGE_KEYS = {
   CLOSING_CHECKLISTS: 'fin_family_closing_checklists_v2',
   DISMISSED_ALERTS: 'fin_family_dismissed_alerts_v2',
   SELECTED_MONTH: 'fin_family_selected_month_v2',
+  CUSTOM_CATEGORIES: 'fin_family_custom_categories_v2',
 };
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
 export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+
+  const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.THEME);
+      if (saved === 'light' || saved === 'dark') return saved;
+      return 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.THEME, theme);
+      const root = document.documentElement;
+      if (theme === 'dark') {
+        root.classList.add('dark');
+      } else {
+        root.classList.remove('dark');
+      }
+    } catch (e) {
+      console.error('Failed to sync theme:', e);
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setThemeState((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  const setTheme = (newTheme: 'light' | 'dark') => {
+    setThemeState(newTheme);
+  };
+
+  const isDarkMode = theme === 'dark';
 
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SELECTED_MONTH);
@@ -266,22 +341,122 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
-    return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
+    if (!saved) return INITIAL_TRANSACTIONS;
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        const seen = new Set<string>();
+        return parsed.map((t, idx) => {
+          if (!t.id || seen.has(t.id)) {
+            const uniqueId = `tx-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`;
+            seen.add(uniqueId);
+            return { ...t, id: uniqueId };
+          }
+          seen.add(t.id);
+          return t;
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return INITIAL_TRANSACTIONS;
   });
 
   const [cards, setCards] = useState<CreditCard[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.CARDS);
-    return saved ? JSON.parse(saved) : INITIAL_CARDS;
+    if (!saved) return INITIAL_CARDS;
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        const seen = new Set<string>();
+        return parsed.map((c, idx) => {
+          if (!c.id || seen.has(c.id)) {
+            const uniqueId = `card-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`;
+            seen.add(uniqueId);
+            return { ...c, id: uniqueId };
+          }
+          seen.add(c.id);
+          return c;
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return INITIAL_CARDS;
+  });
+
+  const [cardSubscriptions, setCardSubscriptions] = useState<CardSubscription[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.CARD_SUBSCRIPTIONS);
+    if (!saved) return INITIAL_CARD_SUBSCRIPTIONS;
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        const seen = new Set<string>();
+        return parsed.map((s, idx) => {
+          const subName = s.name || s.description || 'Assinatura';
+          const subDesc = s.description || s.name || 'Assinatura';
+          if (!s.id || seen.has(s.id)) {
+            const uniqueId = `sub-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`;
+            seen.add(uniqueId);
+            return { ...s, id: uniqueId, name: subName, description: subDesc };
+          }
+          seen.add(s.id);
+          return { ...s, name: subName, description: subDesc };
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return INITIAL_CARD_SUBSCRIPTIONS;
   });
 
   const [cofrinhos, setCofrinhos] = useState<Cofrinho[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.COFRINHOS);
-    return saved ? JSON.parse(saved) : INITIAL_COFRINHOS;
+    if (!saved) return INITIAL_COFRINHOS;
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        // Filtrar apenas os 3 cofrinhos autorizados e remover os antigos demo
+        const filtered = parsed.filter(
+          (c) =>
+            c.id === 'cof-reserva' ||
+            c.id === 'cof-casa' ||
+            c.id === 'cof-lazer'
+        );
+        const existingIds = new Set(filtered.map((c) => c.id));
+        const merged = [...filtered];
+        INITIAL_COFRINHOS.forEach((initCof) => {
+          if (!existingIds.has(initCof.id)) {
+            merged.push(initCof);
+          }
+        });
+        return merged.length > 0 ? merged : INITIAL_COFRINHOS;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return INITIAL_COFRINHOS;
   });
 
   const [cofrinhoMovements, setCofrinhoMovements] = useState<CofrinhoMovement[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.COFRINHO_MOVEMENTS);
-    return saved ? JSON.parse(saved) : INITIAL_COFRINHO_MOVEMENTS;
+    if (!saved) return INITIAL_COFRINHO_MOVEMENTS;
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        // Filtrar apenas movimentos pertencentes aos 3 cofrinhos autorizados
+        const filtered = parsed.filter(
+          (m) =>
+            m.cofrinhoId === 'cof-reserva' ||
+            m.cofrinhoId === 'cof-casa' ||
+            m.cofrinhoId === 'cof-lazer'
+        );
+        return filtered.length > 0 ? filtered : INITIAL_COFRINHO_MOVEMENTS;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return INITIAL_COFRINHO_MOVEMENTS;
   });
 
   const [globalCofrinhoSettings, setGlobalCofrinhoSettings] = useState<GlobalCofrinhoSettings>(() => {
@@ -352,7 +527,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const [shoppingLists, setShoppingLists] = useState<ShoppingList[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SHOPPING_LISTS);
-    return saved ? JSON.parse(saved) : INITIAL_SHOPPING_LISTS;
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return INITIAL_SHOPPING_LISTS;
   });
 
   const [stockItems, setStockItems] = useState<StockItem[]>(() => {
@@ -369,6 +551,26 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const saved = localStorage.getItem(STORAGE_KEYS.SALARY_SETTINGS);
     return saved ? JSON.parse(saved) : INITIAL_SALARY_SETTINGS;
   });
+
+  const [customCategories, setCustomCategories] = useState<{ despesa: string[]; receita: string[] }>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.CUSTOM_CATEGORIES);
+    return saved ? JSON.parse(saved) : { despesa: [], receita: [] };
+  });
+
+  const addCustomCategory = (type: 'despesa' | 'receita', category: string) => {
+    const clean = category.trim();
+    if (!clean) return;
+    setCustomCategories((prev) => {
+      const list = prev[type] || [];
+      if (list.includes(clean)) return prev;
+      const updated = { ...prev, [type]: [...list, clean] };
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_CATEGORIES, JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const person1Name = salarySettings.person1Name || 'Ricardo';
+  const person2Name = salarySettings.person2Name || 'Ellen';
 
   const [investmentContributions, setInvestmentContributions] = useState<InvestmentContribution[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.INVESTMENTS);
@@ -410,6 +612,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.CARDS, JSON.stringify(cards));
   }, [cards]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.CARD_SUBSCRIPTIONS, JSON.stringify(cardSubscriptions));
+  }, [cardSubscriptions]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.COFRINHOS, JSON.stringify(cofrinhos));
@@ -487,11 +693,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   useEffect(() => {
     const weeksCount = getWeeksInMonth(selectedMonth);
     setGroceryPlan((prev) => {
-      if (prev.monthKey === selectedMonth && prev.ricardoWeeks.length === weeksCount) {
+      if (prev.monthKey === selectedMonth && prev.ricardoWeeks.length === weeksCount && prev.ellenWeeks?.length === weeksCount) {
         return prev;
       }
       const isOptionB = prev.mode === 'opcao_b';
       const weeklyAmount = isOptionB && weeksCount === 5 ? 120 : 150;
+      const ellenWeeklyAmount = Math.round((prev.ellenMonthlyPlanned || 400) / weeksCount);
       
       const weeks = Array.from({ length: weeksCount }, (_, idx) => ({
         weekIndex: idx + 1,
@@ -501,15 +708,28 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         completed: idx < 3,
       }));
 
+      const ellenWeeks = Array.from({ length: weeksCount }, (_, idx) => ({
+        weekIndex: idx + 1,
+        weekLabel: `Semana ${idx + 1}`,
+        plannedAmount: ellenWeeklyAmount,
+        actualAmount: ellenWeeklyAmount,
+        completed: idx < 3,
+      }));
+
       return {
         monthKey: selectedMonth,
         mode: prev.mode || 'opcao_a',
         totalWeeks: weeksCount,
         ricardoWeeklyPlanned: weeklyAmount,
         ricardoWeeks: weeks,
-        ellenMonthlyPlanned: 400,
-        ellenActualAmount: 400,
+        ellenPlanningType: prev.ellenPlanningType || 'semanal',
+        ellenMonthlyPlanned: prev.ellenMonthlyPlanned || 400,
+        ellenWeeklyPlanned: ellenWeeklyAmount,
+        ellenActualAmount: prev.ellenActualAmount || 400,
         ellenCompleted: true,
+        ellenWeeks: ellenWeeks,
+        carryOverEnabled: prev.carryOverEnabled ?? true,
+        ellenCarryOverEnabled: prev.ellenCarryOverEnabled ?? true,
       };
     });
   }, [selectedMonth]);
@@ -519,6 +739,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return (
       transactions.some((t) => t.isDemo) ||
       cards.some((c) => c.isDemo) ||
+      cardSubscriptions.some((s) => s.isDemo) ||
       cofrinhos.some((cof) => cof.isDemo) ||
       installmentPurchases.some((i) => i.isDemo) ||
       groceryTrips.some((g) => g.isDemo) ||
@@ -526,11 +747,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       emergencyContributions.some((e) => e.isDemo) ||
       renovationExpenses.some((r) => r.isDemo)
     );
-  }, [transactions, cards, cofrinhos, installmentPurchases, groceryTrips, investmentContributions, emergencyContributions, renovationExpenses]);
+  }, [transactions, cards, cardSubscriptions, cofrinhos, installmentPurchases, groceryTrips, investmentContributions, emergencyContributions, renovationExpenses]);
 
   const clearDemoData = () => {
     setTransactions((prev) => prev.filter((t) => !t.isDemo));
     setCards((prev) => prev.filter((c) => !c.isDemo));
+    setCardSubscriptions((prev) => prev.filter((s) => !s.isDemo));
     setCofrinhos((prev) => prev.filter((cof) => !cof.isDemo));
     setCofrinhoMovements((prev) => prev.filter((cm) => !cm.isDemo));
     setInstallmentPurchases((prev) => prev.filter((i) => !i.isDemo));
@@ -546,6 +768,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const restoreDemoData = () => {
     setTransactions(INITIAL_TRANSACTIONS);
     setCards(INITIAL_CARDS);
+    setCardSubscriptions(INITIAL_CARD_SUBSCRIPTIONS);
     setCofrinhos(INITIAL_COFRINHOS);
     setCofrinhoMovements(INITIAL_COFRINHO_MOVEMENTS);
     setInstallmentPurchases(INITIAL_INSTALLMENTS);
@@ -584,7 +807,145 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteTransaction = (id: string) => {
+    const tx = transactions.find((t) => t.id === id);
+    if (!tx) {
+      setTransactions((prev) => prev.filter((t) => t.id !== id));
+      return;
+    }
+
+    // 1. Excluir lançamento
     setTransactions((prev) => prev.filter((t) => t.id !== id));
+
+    // 2. Se for compra de supermercado vinculada, excluir registro de supermercado
+    if (tx.groceryTripId) {
+      setGroceryTrips((prev) => prev.filter((g) => g.id !== tx.groceryTripId));
+    }
+
+    // 3. Sincronização com Cofrinhos & Metas: encontrar movimentações correspondentes
+    const relatedMovements = cofrinhoMovements.filter((m) => {
+      if (tx.cofrinhoMovementId && m.id === tx.cofrinhoMovementId) return true;
+      if (m.transactionId === tx.id) return true;
+      if (tx.id === 'tx-reserva-ricardo' && m.id === 'cm-1') return true;
+      if (tx.id === 'tx-reserva-ellen' && m.id === 'cm-2') return true;
+      if (tx.investmentContributionId && m.investmentContributionId === tx.investmentContributionId) return true;
+      if (tx.emergencyContributionId && m.emergencyContributionId === tx.emergencyContributionId) return true;
+      if (tx.id === `tx-inv-${m.investmentContributionId}`) return true;
+
+      // Se for lançamento de investimento sem ID explícito, correlacionar por características
+      if (tx.type === 'investimento') {
+        const isSameAmount = Math.abs(m.amount - tx.amount) < 0.01;
+        const isSameDate = m.date === tx.date;
+        const isSamePerson = m.person === tx.person;
+        const isAporte = m.type === 'aporte';
+
+        const txCofId =
+          tx.cofrinhoId ||
+          (tx.subcategory === 'Reserva de Emergência' || tx.description.toLowerCase().includes('reserva')
+            ? 'cof-reserva'
+            : undefined);
+        const matchesCof = txCofId ? m.cofrinhoId === txCofId : true;
+
+        if (isSameAmount && isSameDate && isSamePerson && isAporte && matchesCof) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    if (relatedMovements.length > 0) {
+      const movementIdsToRemove = new Set(relatedMovements.map((m) => m.id));
+
+      // Reverter saldos e rendimentos dos cofrinhos afetados
+      setCofrinhos((prev) =>
+        prev.map((c) => {
+          const movsForCof = relatedMovements.filter((m) => m.cofrinhoId === c.id);
+          if (movsForCof.length === 0) return c;
+
+          let deltaBalance = 0;
+          let deltaYield = 0;
+          let deltaAccYield = 0;
+
+          movsForCof.forEach((mov) => {
+            if (mov.type === 'aporte') {
+              deltaBalance -= mov.amount;
+            } else if (mov.type === 'retirada') {
+              deltaBalance += mov.amount;
+            } else if (mov.type === 'rendimento') {
+              deltaBalance -= mov.amount;
+              deltaYield -= mov.amount;
+              deltaAccYield -= mov.amount;
+            }
+          });
+
+          return {
+            ...c,
+            currentBalance: Math.max(0, c.currentBalance + deltaBalance),
+            monthlyYield: Math.max(0, c.monthlyYield + deltaYield),
+            accumulatedYield: Math.max(0, c.accumulatedYield + deltaAccYield),
+            isDemo: false,
+          };
+        })
+      );
+
+      // Excluir movimentações do cofrinho
+      setCofrinhoMovements((prev) => prev.filter((m) => !movementIdsToRemove.has(m.id)));
+    }
+
+    // 4. Limpar contribuições de investimentos correlacionadas
+    setInvestmentContributions((prev) =>
+      prev.filter((inv) => {
+        if (tx.investmentContributionId && inv.id === tx.investmentContributionId) return false;
+        if (tx.id === 'tx-inv-' + inv.id) return false;
+        if (inv.transactionId === tx.id) return false;
+        if (
+          tx.type === 'investimento' &&
+          Math.abs(inv.amount - tx.amount) < 0.01 &&
+          inv.date === tx.date &&
+          inv.person === tx.person
+        ) {
+          return false;
+        }
+        return true;
+      })
+    );
+
+    // 5. Limpar contribuições de reserva de emergência correlacionadas
+    setEmergencyContributions((prev) =>
+      prev.filter((efc) => {
+        if (tx.emergencyContributionId && efc.id === tx.emergencyContributionId) return false;
+        if (efc.transactionId === tx.id) return false;
+        if (tx.id === 'tx-reserva-ricardo' && efc.person === 'Ricardo') return false;
+        if (tx.id === 'tx-reserva-ellen' && efc.person === 'Ellen') return false;
+        if (
+          tx.type === 'investimento' &&
+          (tx.subcategory === 'Reserva de Emergência' || tx.description.toLowerCase().includes('reserva')) &&
+          Math.abs(efc.amount - tx.amount) < 0.01 &&
+          efc.date === tx.date &&
+          efc.person === tx.person
+        ) {
+          return false;
+        }
+        return true;
+      })
+    );
+
+    // 6. Resetar status do aporte obrigatório do mês se for aporte da reserva
+    if (
+      tx.id === 'tx-reserva-ricardo' ||
+      (tx.type === 'investimento' &&
+        tx.person === 'Ricardo' &&
+        (tx.subcategory === 'Reserva de Emergência' || tx.description.toLowerCase().includes('reserva')))
+    ) {
+      setMonthlyAporteStatus('Ricardo', 'programado');
+    }
+    if (
+      tx.id === 'tx-reserva-ellen' ||
+      (tx.type === 'investimento' &&
+        tx.person === 'Ellen' &&
+        (tx.subcategory === 'Reserva de Emergência' || tx.description.toLowerCase().includes('reserva')))
+    ) {
+      setMonthlyAporteStatus('Ellen', 'programado');
+    }
   };
 
   const toggleTransactionPaid = (id: string) => {
@@ -597,7 +958,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const addCard = (card: Omit<CreditCard, 'id'>) => {
     const newCard: CreditCard = {
       ...card,
-      id: 'card-' + Date.now(),
+      id: 'card-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
     };
     setCards((prev) => [...prev, newCard]);
   };
@@ -610,21 +971,34 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const deleteCard = (id: string) => {
     setCards((prev) => prev.filter((c) => c.id !== id));
+    setTransactions((prev) =>
+      prev.map((t) => (t.cardId === id ? { ...t, cardId: undefined } : t))
+    );
   };
 
   // Installments CRUD
   const addInstallmentPurchase = (purchase: Omit<InstallmentPurchase, 'id'>) => {
-    const purchaseId = 'inst-' + Date.now();
+    const purchaseId = 'inst-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    const card = cards.find((c) => c.id === purchase.cardId);
+    
+    // Determine the first installment month with closingDay consideration
+    let startingMonth = purchase.firstInstallmentMonth;
+    if (!startingMonth) {
+      const pDate = purchase.purchaseDate || new Date().toISOString().slice(0, 10);
+      startingMonth = calculateCardCompetenceMonth(pDate, card?.closingDay);
+    }
+
     const newPurchase: InstallmentPurchase = {
       ...purchase,
+      firstInstallmentMonth: startingMonth,
+      firstDueDate: startingMonth,
       id: purchaseId,
     };
     setInstallmentPurchases((prev) => [newPurchase, ...prev]);
 
     const newTxs: Transaction[] = [];
     for (let i = 0; i < purchase.totalInstallments; i++) {
-      const monthForInst = addMonthsToKey(purchase.firstInstallmentMonth, i);
-      const card = cards.find((c) => c.id === purchase.cardId);
+      const monthForInst = addMonthsToKey(startingMonth, i);
       const dueDay = card ? String(card.dueDay).padStart(2, '0') : '20';
       const dateStr = `${monthForInst}-${dueDay}`;
 
@@ -659,9 +1033,71 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
   };
 
+  const deleteInstallmentFromMonth = (purchaseId: string, fromCurrentInstallment: number) => {
+    // Excluir a parcela atual e todas as parcelas subsequentes (nos meses seguintes)
+    setTransactions((prev) =>
+      prev.filter((t) => {
+        if (t.installmentInfo?.purchaseId === purchaseId) {
+          return (t.installmentInfo.current || 1) < fromCurrentInstallment;
+        }
+        return true;
+      })
+    );
+
+    // Se for a partir da 1ª parcela, exclui a compra parcelada por completo
+    if (fromCurrentInstallment <= 1) {
+      setInstallmentPurchases((prev) => prev.filter((i) => i.id !== purchaseId));
+    } else {
+      // Se for a partir de uma parcela intermediária, ajusta o total de parcelas da compra
+      setInstallmentPurchases((prev) =>
+        prev.map((inst) => {
+          if (inst.id === purchaseId) {
+            const newTotal = fromCurrentInstallment - 1;
+            return {
+              ...inst,
+              totalInstallments: newTotal,
+              remainingInstallments: 0,
+              totalAmount: Number((newTotal * inst.installmentAmount).toFixed(2)),
+              isDemo: false,
+            };
+          }
+          return inst;
+        })
+      );
+    }
+  };
+
   const updateInstallmentPurchase = (id: string, updated: Partial<InstallmentPurchase>) => {
     setInstallmentPurchases((prev) =>
       prev.map((inst) => (inst.id === id ? { ...inst, ...updated, isDemo: false } : inst))
+    );
+
+    // Sincronizar todos os lançamentos gerados nos meses correspondentes com o novo nome/dados
+    setTransactions((prev) =>
+      prev.map((t) => {
+        if (t.installmentInfo?.purchaseId === id) {
+          const current = t.installmentInfo.current;
+          const total = updated.totalInstallments ?? t.installmentInfo.total;
+          const newDesc =
+            updated.description !== undefined
+              ? `${updated.description} (Parc. ${current}/${total})`
+              : t.description;
+
+          return {
+            ...t,
+            description: newDesc,
+            category: updated.category !== undefined ? updated.category : t.category,
+            person: updated.person !== undefined ? updated.person : t.person,
+            cardId: updated.cardId !== undefined ? updated.cardId : t.cardId,
+            amount: updated.installmentAmount !== undefined ? updated.installmentAmount : t.amount,
+            installmentInfo: {
+              ...t.installmentInfo,
+              total,
+            },
+          };
+        }
+        return t;
+      })
     );
   };
 
@@ -694,11 +1130,34 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
   };
 
+  // Card Subscriptions CRUD
+  const addCardSubscription = (subscription: Omit<CardSubscription, 'id'>) => {
+    const subId = 'sub-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    const newSub: CardSubscription = {
+      ...subscription,
+      id: subId,
+    };
+    setCardSubscriptions((prev) => [newSub, ...prev]);
+  };
+
+  const updateCardSubscription = (id: string, updated: Partial<CardSubscription>) => {
+    setCardSubscriptions((prev) =>
+      prev.map((sub) => (sub.id === id ? { ...sub, ...updated, isDemo: false } : sub))
+    );
+  };
+
+  const deleteCardSubscription = (id: string) => {
+    setCardSubscriptions((prev) => prev.filter((sub) => sub.id !== id));
+    setTransactions((prev) =>
+      prev.filter((t) => t.subscriptionId !== id && t.id !== id && !t.id.includes(id))
+    );
+  };
+
   // Cofrinhos CRUD
   const addCofrinho = (cofrinho: Omit<Cofrinho, 'id'>) => {
     const newCof: Cofrinho = {
       ...cofrinho,
-      id: 'cof-' + Date.now(),
+      id: 'cof-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
     };
     setCofrinhos((prev) => [...prev, newCof]);
   };
@@ -709,6 +1168,67 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
   };
 
+  const adjustCofrinhoBalance = (id: string, newCurrentBalance: number, newInitialBalance?: number) => {
+    setCofrinhos((prev) =>
+      prev.map((c) => {
+        if (c.id === id) {
+          return {
+            ...c,
+            currentBalance: Math.max(0, newCurrentBalance),
+            initialBalance: newInitialBalance !== undefined ? Math.max(0, newInitialBalance) : c.initialBalance,
+            isDemo: false,
+          };
+        }
+        return c;
+      })
+    );
+  };
+
+  const recalculateCofrinhoBalancesFromMovements = () => {
+    setCofrinhos((prev) =>
+      prev.map((c) => {
+        const movs = cofrinhoMovements.filter((m) => m.cofrinhoId === c.id);
+        let calc = c.initialBalance || 0;
+        let monthlyY = 0;
+        let accY = 0;
+        movs.forEach((m) => {
+          if (m.type === 'aporte') {
+            calc += m.amount;
+          } else if (m.type === 'retirada') {
+            calc = Math.max(0, calc - m.amount);
+          } else if (m.type === 'rendimento') {
+            calc += m.amount;
+            accY += m.amount;
+            if (m.date.startsWith(selectedMonth)) {
+              monthlyY += m.amount;
+            }
+          }
+        });
+        return {
+          ...c,
+          currentBalance: Math.max(0, Math.round(calc * 100) / 100),
+          monthlyYield: Math.round(monthlyY * 100) / 100,
+          accumulatedYield: Math.round(accY * 100) / 100,
+          isDemo: false,
+        };
+      })
+    );
+  };
+
+  const resetAllCofrinhosToZero = () => {
+    setCofrinhos((prev) =>
+      prev.map((c) => ({
+        ...c,
+        currentBalance: 0,
+        initialBalance: 0,
+        monthlyYield: 0,
+        accumulatedYield: 0,
+        isDemo: false,
+      }))
+    );
+    setCofrinhoMovements([]);
+  };
+
   const deleteCofrinho = (id: string) => {
     setCofrinhos((prev) => prev.filter((c) => c.id !== id));
     setCofrinhoMovements((prev) => prev.filter((m) => m.cofrinhoId !== id));
@@ -717,7 +1237,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const addCofrinhoMovement = (
     movementOrId: string | Omit<CofrinhoMovement, 'id'>,
     optionalMovement?: Omit<CofrinhoMovement, 'id' | 'cofrinhoId'>
-  ) => {
+  ): CofrinhoMovement => {
     const movement: Omit<CofrinhoMovement, 'id'> =
       typeof movementOrId === 'string' && optionalMovement
         ? { ...optionalMovement, cofrinhoId: movementOrId }
@@ -725,7 +1245,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const newMovement: CofrinhoMovement = {
       ...movement,
-      id: 'cm-' + Date.now(),
+      id: 'cm-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9),
     };
     setCofrinhoMovements((prev) => [newMovement, ...prev]);
 
@@ -756,23 +1276,73 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         return c;
       })
     );
+
+    return newMovement;
   };
 
   const deleteCofrinhoMovement = (id: string) => {
     const mov = cofrinhoMovements.find((m) => m.id === id);
     if (mov) {
+      // 1. Reverter saldos e rendimentos do cofrinho
       setCofrinhos((prev) =>
         prev.map((c) => {
           if (c.id === mov.cofrinhoId) {
             const delta = mov.type === 'retirada' ? mov.amount : -mov.amount;
+            const newYield =
+              mov.type === 'rendimento' ? Math.max(0, c.monthlyYield - mov.amount) : c.monthlyYield;
+            const newAccYield =
+              mov.type === 'rendimento' ? Math.max(0, c.accumulatedYield - mov.amount) : c.accumulatedYield;
             return {
               ...c,
               currentBalance: Math.max(0, c.currentBalance + delta),
+              monthlyYield: newYield,
+              accumulatedYield: newAccYield,
+              isDemo: false,
             };
           }
           return c;
         })
       );
+
+      // 2. Sincronizar exclusão com a lista de lançamentos (Transactions)
+      setTransactions((prev) =>
+        prev.filter((t) => {
+          if (mov.transactionId && t.id === mov.transactionId) return false;
+          if (t.cofrinhoMovementId && t.cofrinhoMovementId === id) return false;
+          if (id === 'cm-1' && t.id === 'tx-reserva-ricardo') return false;
+          if (id === 'cm-2' && t.id === 'tx-reserva-ellen') return false;
+          if (mov.type === 'aporte' && t.type === 'investimento') {
+            const isSameDate = t.date === mov.date;
+            const isSameAmount = Math.abs(t.amount - mov.amount) < 0.01;
+            const isSamePerson = t.person === mov.person;
+            if (isSameDate && isSameAmount && isSamePerson) {
+              return false;
+            }
+          }
+          return true;
+        })
+      );
+
+      // 3. Excluir contribuição de reserva ou investimentos vinculada
+      if (mov.emergencyContributionId) {
+        setEmergencyContributions((prev) => prev.filter((e) => e.id !== mov.emergencyContributionId));
+      } else if (mov.cofrinhoId === 'cof-reserva' || id === 'cm-1' || id === 'cm-2') {
+        setEmergencyContributions((prev) =>
+          prev.filter((e) => !(Math.abs(e.amount - mov.amount) < 0.01 && e.date === mov.date && e.person === mov.person))
+        );
+      }
+
+      if (mov.investmentContributionId) {
+        setInvestmentContributions((prev) => prev.filter((inv) => inv.id !== mov.investmentContributionId));
+      }
+
+      // 4. Resetar status se for aporte mensal da reserva
+      if (id === 'cm-1' || (mov.cofrinhoId === 'cof-reserva' && mov.person === 'Ricardo')) {
+        setMonthlyAporteStatus('Ricardo', 'programado');
+      }
+      if (id === 'cm-2' || (mov.cofrinhoId === 'cof-reserva' && mov.person === 'Ellen')) {
+        setMonthlyAporteStatus('Ellen', 'programado');
+      }
     }
     setCofrinhoMovements((prev) => prev.filter((m) => m.id !== id));
   };
@@ -895,21 +1465,21 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     }
 
-    // Aporte 20% Casa e Manutenção
+    // Aporte 20% Fundo Compra da Casa Nova
     if (casaAmount > 0) {
       addCofrinhoMovement({
-        cofrinhoId: 'cof-manutencao',
+        cofrinhoId: 'cof-casa',
         date,
         type: 'aporte',
         amount: casaAmount,
         person,
         isExtraordinaryShare: true,
-        subPurpose: 'manutencao_casa',
-        notes: `20% de "${description}" - Destinação Cofrinho Casa e Manutenção`,
+        subPurpose: 'compra_casa',
+        notes: `20% de "${description}" - Destinação Fundo Compra da Casa Nova`,
       });
     }
 
-    // Aporte 10% Lazer
+    // Aporte 10% Lazer e Viagens
     if (lazerAmount > 0) {
       addCofrinhoMovement({
         cofrinhoId: 'cof-lazer',
@@ -919,7 +1489,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         person,
         isExtraordinaryShare: true,
         subPurpose: 'passeios',
-        notes: `10% de "${description}" - Destinação Cofrinho Lazer`,
+        notes: `10% de "${description}" - Destinação Cofrinho Lazer e Viagens`,
       });
     }
 
@@ -999,7 +1569,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   // Grocery CRUD & Planning
   const addGroceryTrip = (trip: Omit<GroceryTrip, 'id'>) => {
-    const tripId = 'groc-' + Date.now();
+    const tripId = 'groc-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
     const newTrip: GroceryTrip = {
       ...trip,
       id: tripId,
@@ -1098,6 +1668,34 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }));
   };
 
+  const toggleEllenWeek = (weekIndex: number) => {
+    setGroceryPlan((prev) => ({
+      ...prev,
+      ellenWeeks: (prev.ellenWeeks || []).map((w) => {
+        if (w.weekIndex === weekIndex) {
+          const nextCompleted = !w.completed;
+          return {
+            ...w,
+            completed: nextCompleted,
+            actualAmount: nextCompleted ? (w.actualAmount || w.plannedAmount || 80) : 0,
+          };
+        }
+        return w;
+      }),
+    }));
+  };
+
+  const updateEllenWeekAmount = (weekIndex: number, amount: number) => {
+    setGroceryPlan((prev) => ({
+      ...prev,
+      ellenWeeks: (prev.ellenWeeks || []).map((w) =>
+        w.weekIndex === weekIndex
+          ? { ...w, actualAmount: amount, completed: amount > 0 }
+          : w
+      ),
+    }));
+  };
+
   const toggleEllenGrocery = () => {
     setGroceryPlan((prev) => {
       const nextCompleted = !prev.ellenCompleted;
@@ -1117,11 +1715,19 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }));
   };
 
+  const updateGroceryPlanSettings = (settings: Partial<GroceryMonthPlan>) => {
+    setGroceryPlan((prev) => {
+      const updated = { ...prev, ...settings };
+      localStorage.setItem(STORAGE_KEYS.GROCERY_PLAN, JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   // Shopping Lists CRUD & Conversions
   const addShoppingList = (list: Omit<ShoppingList, 'id'>) => {
     const newList: ShoppingList = {
       ...list,
-      id: 'list-' + Date.now(),
+      id: 'list-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
     };
     setShoppingLists((prev) => [newList, ...prev]);
   };
@@ -1141,7 +1747,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (!original) return;
     const copied: ShoppingList = {
       ...original,
-      id: 'list-' + Date.now(),
+      id: 'list-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
       name: `${original.name} (Cópia)`,
       createdAt: new Date().toISOString().slice(0, 10),
       isDemo: false,
@@ -1155,20 +1761,39 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     setShoppingLists((prev) => [copied, ...prev]);
   };
 
+  const generateAutoShoppingListFromStock = () => {
+    const autoList = generateSmartShoppingListFromStock(stockItems, groceryTrips, selectedMonth);
+    if (autoList.items.length === 0) {
+      alert('Todos os itens em estoque estão em nível suficiente! Nenhuma reposição imediata é necessária.');
+      return;
+    }
+    const newList: ShoppingList = {
+      ...autoList,
+      id: 'list-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+    };
+    setShoppingLists((prev) => [newList, ...prev]);
+  };
+
   const convertShoppingListToTrip = (
     listId: string,
     storeName: string,
     person: Person,
-    paymentMethod: PaymentMethod
+    paymentMethod: PaymentMethod,
+    totalAmount?: number,
+    tripType?: 'semanal' | 'mensal' | 'extraordinaria',
+    weekNumber?: number,
+    savingsAmount?: number,
+    customItems?: ShoppingListItem[]
   ) => {
     const list = shoppingLists.find((l) => l.id === listId);
-    if (!list) return;
+    if (!list && !customItems) return;
 
-    const completedItems = list.items.filter((i) => i.completed || (i.actualPricePaid && i.actualPricePaid > 0));
-    const itemsToConvert = completedItems.length > 0 ? completedItems : list.items;
+    const sourceItems = customItems || list?.items || [];
+    const completedItems = sourceItems.filter((i) => i.completed || (i.actualPricePaid && i.actualPricePaid > 0));
+    const itemsToConvert = completedItems.length > 0 ? completedItems : sourceItems;
     
     const products: GroceryProduct[] = itemsToConvert.map((item) => {
-      const unitPrice = item.actualPricePaid && item.quantity ? item.actualPricePaid / item.quantity : (item.lastPricePaid || 0);
+      const unitPrice = item.actualPricePaid && item.quantity ? item.actualPricePaid / item.quantity : (item.lastPricePaid || item.estimatedPrice || 0);
       const total = item.actualPricePaid || (unitPrice * item.quantity);
       return {
         id: 'gp-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
@@ -1183,27 +1808,75 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       };
     });
 
-    const totalAmount = products.reduce((sum, p) => sum + p.totalPrice, 0);
+    const computedTotal = products.reduce((sum, p) => sum + p.totalPrice, 0);
+    const finalAmount = totalAmount !== undefined && totalAmount > 0 ? totalAmount : (computedTotal > 0 ? computedTotal : (list?.estimatedTotal || 0));
     const today = new Date().toISOString().slice(0, 10);
 
+    // 1. Add Grocery Trip
     addGroceryTrip({
       date: today,
       storeName: storeName || 'Supermercado',
-      totalAmount: totalAmount > 0 ? totalAmount : (list.estimatedTotal || 0),
+      totalAmount: finalAmount,
       person: person || 'Família',
       paymentMethod: paymentMethod || 'debito',
-      isExtraordinary: false,
-      notes: `Compra gerada a partir da lista: ${list.name}`,
+      isExtraordinary: tripType === 'extraordinaria',
+      notes: `Compra realizada no ${storeName || 'Mercado'}${savingsAmount ? ` (Economia: R$ ${savingsAmount.toFixed(2)})` : ''}. Gerada da lista: ${list?.name || 'Lista de Compras'}.`,
       items: products,
       products,
     });
+
+    // 2. Synchronize Stock: update purchased items' lastPurchaseDate and mark sufficient
+    setStockItems((prevStock) => {
+      return prevStock.map((stock) => {
+        const matchingBought = itemsToConvert.find(
+          (bought) =>
+            bought.product.toLowerCase().includes(stock.product.toLowerCase()) ||
+            stock.product.toLowerCase().includes(bought.product.toLowerCase())
+        );
+        if (matchingBought) {
+          return {
+            ...stock,
+            lastPurchaseDate: today,
+            status: 'suficiente',
+            lastPricePaid: matchingBought.actualPricePaid || matchingBought.estimatedPrice || stock.lastPricePaid,
+            store: storeName || stock.store,
+            isDemo: false,
+          };
+        }
+        return stock;
+      });
+    });
+
+    // 3. Mark all converted items in shopping list as completed
+    if (list) {
+      setShoppingLists((prevLists) =>
+        prevLists.map((l) =>
+          l.id === listId
+            ? {
+                ...l,
+                items: l.items.map((i) => ({ ...i, completed: true })),
+                isDemo: false,
+              }
+            : l
+        )
+      );
+    }
+
+    // 4. Update Grocery Plan if weekly
+    if (tripType === 'semanal' && weekNumber) {
+      if (person === 'Ricardo') {
+        updateRicardoWeekAmount(weekNumber, finalAmount);
+      } else if (person === 'Ellen') {
+        updateEllenWeekAmount(weekNumber, finalAmount);
+      }
+    }
   };
 
   // Stock Items CRUD
   const addStockItem = (item: Omit<StockItem, 'id'>) => {
     const newItem: StockItem = {
       ...item,
-      id: 'stk-' + Date.now(),
+      id: 'stk-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
     };
     setStockItems((prev) => [newItem, ...prev]);
   };
@@ -1222,7 +1895,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const addCestaBasicaRecord = (record: Omit<CestaBasicaRecord, 'id'>) => {
     const newRecord: CestaBasicaRecord = {
       ...record,
-      id: 'cesta-' + Date.now(),
+      id: 'cesta-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
     };
     setCestaBasicaRecords((prev) => [newRecord, ...prev]);
 
@@ -1281,14 +1954,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   // Investments & Emergency
   const addInvestmentContribution = (inv: Omit<InvestmentContribution, 'id'>) => {
-    const newInv: InvestmentContribution = {
-      ...inv,
-      id: 'inv-' + Date.now(),
-    };
-    setInvestmentContributions((prev) => [newInv, ...prev]);
+    const invId = 'inv-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    const txId = inv.transactionId || 'tx-inv-' + invId;
 
     const newTx: Transaction = {
-      id: 'tx-inv-' + newInv.id,
+      id: txId,
       description: `Investimento Mensal - ${inv.person} (${inv.targetAsset})`,
       amount: inv.amount,
       type: 'investimento',
@@ -1299,36 +1969,69 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       paid: true,
       isRecurring: true,
       paymentMethod: 'transferencia',
+      investmentContributionId: invId,
       notes: inv.notes,
     };
-    setTransactions((prev) => [newTx, ...prev]);
+
+    const newInv: InvestmentContribution = {
+      ...inv,
+      id: invId,
+      transactionId: txId,
+    };
+
+    setInvestmentContributions((prev) => [newInv, ...prev]);
+    if (!inv.transactionId) {
+      setTransactions((prev) => [newTx, ...prev]);
+    }
   };
 
   const deleteInvestmentContribution = (id: string) => {
-    setInvestmentContributions((prev) => prev.filter((inv) => inv.id !== id));
-    setTransactions((prev) => prev.filter((t) => t.id !== 'tx-inv-' + id));
+    const inv = investmentContributions.find((item) => item.id === id);
+    setInvestmentContributions((prev) => prev.filter((item) => item.id !== id));
+    setTransactions((prev) =>
+      prev.filter((t) => t.id !== 'tx-inv-' + id && t.investmentContributionId !== id && (!inv?.transactionId || t.id !== inv.transactionId))
+    );
+    if (inv?.cofrinhoMovementId) {
+      deleteCofrinhoMovement(inv.cofrinhoMovementId);
+    }
   };
 
   const addEmergencyContribution = (efc: Omit<EmergencyFundContribution, 'id'>) => {
+    const efcId = 'efc-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    
+    // Add to Cofrinho Reserva as well if not already passed with cofrinhoMovementId
+    let createdMovId = efc.cofrinhoMovementId;
+    if (!createdMovId) {
+      const mov = addCofrinhoMovement({
+        cofrinhoId: 'cof-reserva',
+        date: efc.date,
+        type: 'aporte',
+        amount: efc.amount,
+        person: efc.person,
+        transactionId: efc.transactionId,
+        emergencyContributionId: efcId,
+        notes: efc.notes || `Aporte Reserva de Emergência (${efc.institution})`,
+      });
+      createdMovId = mov.id;
+    }
+
     const newEfc: EmergencyFundContribution = {
       ...efc,
-      id: 'efc-' + Date.now(),
+      id: efcId,
+      cofrinhoMovementId: createdMovId,
     };
     setEmergencyContributions((prev) => [newEfc, ...prev]);
-
-    // Add to Cofrinho Reserva as well
-    addCofrinhoMovement({
-      cofrinhoId: 'cof-reserva',
-      date: efc.date,
-      type: 'aporte',
-      amount: efc.amount,
-      person: efc.person,
-      notes: efc.notes || `Aporte Reserva de Emergência (${efc.institution})`,
-    });
   };
 
   const deleteEmergencyContribution = (id: string) => {
+    const efc = emergencyContributions.find((e) => e.id === id);
     setEmergencyContributions((prev) => prev.filter((e) => e.id !== id));
+    if (efc?.transactionId) {
+      setTransactions((prev) => prev.filter((t) => t.id !== efc.transactionId));
+    }
+    if (efc?.cofrinhoMovementId) {
+      deleteCofrinhoMovement(efc.cofrinhoMovementId);
+    }
   };
 
   const updateEmergencySettings = (updated: Partial<EmergencyFundSettings>) => {
@@ -1345,12 +2048,55 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Credit Card Invoices per Month
   const getCardInvoicesForMonth = useCallback((monthKey: string): CardInvoiceSummary[] => {
     return cards.map((card) => {
+      // 1. Regular transactions linked to this card
       const cardTxs = transactions.filter((t) => {
         if (t.cardId !== card.id) return false;
         return (t.competenceMonth || getMonthKey(t.date)) === monthKey;
       });
 
-      const totalAmount = cardTxs.reduce((sum, t) => sum + t.amount, 0);
+      // 2. Active recurring subscriptions on this card
+      const activeSubs = cardSubscriptions.filter((sub) => {
+        if (sub.cardId !== card.id) return false;
+        if (sub.status && sub.status !== 'active') return false;
+        if (sub.isActive === false) return false;
+        // Check starting month
+        if (sub.startMonth && sub.startMonth > monthKey) return false;
+        return true;
+      });
+
+      const txItems = cardTxs.map((t) => ({
+        id: t.id,
+        description: t.description,
+        amount: t.amount,
+        person: t.person,
+        date: t.date,
+        installmentInfo: t.installmentInfo,
+        isCardSubscription: t.isCardSubscription || !!t.subscriptionId,
+        subscriptionId: t.subscriptionId,
+        isDemo: t.isDemo,
+      }));
+
+      // Subscriptions that don't already have an explicit transaction logged in cardTxs for this month
+      const subItems = activeSubs
+        .filter((sub) => !cardTxs.some((t) => t.subscriptionId === sub.id))
+        .map((sub) => {
+          const dueDay = card ? String(card.dueDay).padStart(2, '0') : '10';
+          const subTitle = sub.name || sub.description || 'Assinatura';
+          return {
+            id: `sub-item-${sub.id}-${monthKey}`,
+            description: `${subTitle} (Assinatura Recorrente)`,
+            amount: sub.amount,
+            person: sub.person,
+            date: `${monthKey}-${dueDay}`,
+            installmentInfo: undefined,
+            isCardSubscription: true,
+            subscriptionId: sub.id,
+            isDemo: sub.isDemo,
+          };
+        });
+
+      const allItems = [...txItems, ...subItems];
+      const totalAmount = allItems.reduce((sum, item) => sum + item.amount, 0);
       const limitGoal = card.monthlyLimitGoal || 500; // Meta padrão R$ 500
       const isOverLimit = totalAmount > limitGoal;
       const percentageUsed = limitGoal > 0 ? (totalAmount / limitGoal) * 100 : 0;
@@ -1362,18 +2108,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         limitGoal,
         isOverLimit,
         percentageUsed,
-        items: cardTxs.map((t) => ({
-          id: t.id,
-          description: t.description,
-          amount: t.amount,
-          person: t.person,
-          date: t.date,
-          installmentInfo: t.installmentInfo,
-          isDemo: t.isDemo,
-        })),
+        items: allItems,
       };
     });
-  }, [cards, transactions]);
+  }, [cards, transactions, cardSubscriptions]);
 
   // Current Month Calculations & Summaries
   const currentMonthSummary = useMemo<MonthSummary>(() => {
@@ -1422,18 +2160,45 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     });
 
-    const totalIncome = recurringIncome + extraordinaryIncome + reimbursementIncome;
-    const availableBalance = totalIncome - totalExpense - totalInvested;
-
     // Faturas de Cartão de Ricardo e Ellen
     let ricardoInvoiceTotal = 0;
     let ellenInvoiceTotal = 0;
-    cards.forEach((card) => {
-      const cardTxs = monthTxs.filter((t) => t.cardId === card.id);
-      const cardTotal = cardTxs.reduce((sum, t) => sum + t.amount, 0);
-      if (card.person === 'Ricardo') ricardoInvoiceTotal += cardTotal;
-      else if (card.person === 'Ellen') ellenInvoiceTotal += cardTotal;
+    const currentInvoices = getCardInvoicesForMonth(selectedMonth);
+    currentInvoices.forEach((inv) => {
+      if (inv.card.person === 'Ricardo') ricardoInvoiceTotal += inv.totalAmount;
+      else if (inv.card.person === 'Ellen') ellenInvoiceTotal += inv.totalAmount;
     });
+
+    // Contabilizar assinaturas e débitos recorrentes de cartões no demonstrativo do mês
+    const activeSubs = cardSubscriptions.filter((sub) => {
+      if (sub.status && sub.status !== 'active') return false;
+      if (sub.isActive === false) return false;
+      if (sub.startMonth && sub.startMonth > selectedMonth) return false;
+      if (sub.endMonth && sub.endMonth < selectedMonth) return false;
+      return true;
+    });
+
+    let cardSubscriptionsTotal = 0;
+    let ricardoSubscriptionsTotal = 0;
+    let ellenSubscriptionsTotal = 0;
+
+    activeSubs.forEach((sub) => {
+      cardSubscriptionsTotal += sub.amount;
+      if (sub.person === 'Ricardo') ricardoSubscriptionsTotal += sub.amount;
+      else if (sub.person === 'Ellen') ellenSubscriptionsTotal += sub.amount;
+
+      // Se a assinatura ainda não foi lançada como transação avulsa no extrato, contabiliza como despesa recorrente
+      const alreadyInTxs = monthTxs.some((t) => t.subscriptionId === sub.id);
+      if (!alreadyInTxs) {
+        totalExpense += sub.amount;
+        recurringExpense += sub.amount;
+        expenseByPerson[sub.person] = (expenseByPerson[sub.person] || 0) + sub.amount;
+      }
+    });
+
+    const totalInvoicesAmount = ricardoInvoiceTotal + ellenInvoiceTotal;
+    const totalIncome = recurringIncome + extraordinaryIncome + reimbursementIncome;
+    const availableBalance = totalIncome - totalExpense - totalInvested;
 
     // Supermercado
     const weeksCount = groceryPlan.totalWeeks || getWeeksInMonth(selectedMonth);
@@ -1515,6 +2280,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       investmentEllen,
       ricardoInvoiceTotal,
       ellenInvoiceTotal,
+      cardSubscriptionsTotal,
+      ricardoSubscriptionsTotal,
+      ellenSubscriptionsTotal,
+      totalInvoicesAmount,
       groceryGoal: groceryPlanned,
       groceryTotal: groceryActualSpent,
       groceryPlanned,
@@ -1530,6 +2299,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     transactions,
     selectedMonth,
     cards,
+    cardSubscriptions,
     groceryPlan,
     groceryTrips,
     cofrinhos,
@@ -1818,9 +2588,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       transactions,
       cards,
       cofrinhos,
+      cofrinhoMovements,
       groceryTrips,
+      groceryPlan,
       renovationExpenses,
       futureRent: futureRentSettings,
+      installmentPurchases,
+      closingChecklists,
+      salarySettings,
+      emergencySettings,
+      person1Name,
+      person2Name,
     });
   };
 
@@ -1840,6 +2618,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       appVersion: '2.1.0',
       transactions,
       cards,
+      cardSubscriptions,
       cofrinhos,
       cofrinhoMovements,
       installmentPurchases,
@@ -1866,44 +2645,60 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const importBackupJSON = (jsonString: string): boolean => {
     try {
       const parsed = JSON.parse(jsonString);
+      const ensureUniqueIds = <T extends { id?: string }>(arr: T[], prefix: string): T[] => {
+        const seen = new Set<string>();
+        return arr.map((item, idx) => {
+          if (!item.id || seen.has(item.id)) {
+            const newId = `${prefix}-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`;
+            seen.add(newId);
+            return { ...item, id: newId };
+          }
+          seen.add(item.id);
+          return item;
+        });
+      };
+
       if (parsed.transactions && Array.isArray(parsed.transactions)) {
-        setTransactions(parsed.transactions);
+        setTransactions(ensureUniqueIds(parsed.transactions, 'tx'));
       }
       if (parsed.cards && Array.isArray(parsed.cards)) {
-        setCards(parsed.cards);
+        setCards(ensureUniqueIds(parsed.cards, 'card'));
+      }
+      if (parsed.cardSubscriptions && Array.isArray(parsed.cardSubscriptions)) {
+        setCardSubscriptions(ensureUniqueIds(parsed.cardSubscriptions, 'sub'));
       }
       if (parsed.cofrinhos && Array.isArray(parsed.cofrinhos)) {
-        setCofrinhos(parsed.cofrinhos);
+        setCofrinhos(ensureUniqueIds(parsed.cofrinhos, 'cof'));
       }
       if (parsed.cofrinhoMovements && Array.isArray(parsed.cofrinhoMovements)) {
-        setCofrinhoMovements(parsed.cofrinhoMovements);
+        setCofrinhoMovements(ensureUniqueIds(parsed.cofrinhoMovements, 'cm'));
       }
       if (parsed.installmentPurchases && Array.isArray(parsed.installmentPurchases)) {
-        setInstallmentPurchases(parsed.installmentPurchases);
+        setInstallmentPurchases(ensureUniqueIds(parsed.installmentPurchases, 'inst'));
       }
       if (parsed.groceryTrips && Array.isArray(parsed.groceryTrips)) {
-        setGroceryTrips(parsed.groceryTrips);
+        setGroceryTrips(ensureUniqueIds(parsed.groceryTrips, 'groc'));
       }
       if (parsed.groceryPlan) {
         setGroceryPlan(parsed.groceryPlan);
       }
       if (parsed.shoppingLists && Array.isArray(parsed.shoppingLists)) {
-        setShoppingLists(parsed.shoppingLists);
+        setShoppingLists(ensureUniqueIds(parsed.shoppingLists, 'list'));
       }
       if (parsed.stockItems && Array.isArray(parsed.stockItems)) {
-        setStockItems(parsed.stockItems);
+        setStockItems(ensureUniqueIds(parsed.stockItems, 'stk'));
       }
       if (parsed.cestaBasicaRecords && Array.isArray(parsed.cestaBasicaRecords)) {
-        setCestaBasicaRecords(parsed.cestaBasicaRecords);
+        setCestaBasicaRecords(ensureUniqueIds(parsed.cestaBasicaRecords, 'cesta'));
       }
       if (parsed.salarySettings) {
         setSalarySettings(parsed.salarySettings);
       }
       if (parsed.investmentContributions && Array.isArray(parsed.investmentContributions)) {
-        setInvestmentContributions(parsed.investmentContributions);
+        setInvestmentContributions(ensureUniqueIds(parsed.investmentContributions, 'inv'));
       }
       if (parsed.emergencyContributions && Array.isArray(parsed.emergencyContributions)) {
-        setEmergencyContributions(parsed.emergencyContributions);
+        setEmergencyContributions(ensureUniqueIds(parsed.emergencyContributions, 'efc'));
       }
       if (parsed.emergencySettings) {
         setEmergencySettings(parsed.emergencySettings);
@@ -1990,6 +2785,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         setSelectedMonth,
         transactions,
         cards,
+        cardSubscriptions,
         cofrinhos,
         cofrinhoMovements,
         installmentPurchases,
@@ -2021,9 +2817,16 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         addInstallmentPurchase,
         updateInstallmentPurchase,
         deleteInstallmentPurchase,
+        deleteInstallmentFromMonth,
         earlyPayInstallment,
+        addCardSubscription,
+        updateCardSubscription,
+        deleteCardSubscription,
         addCofrinho,
         updateCofrinho,
+        adjustCofrinhoBalance,
+        recalculateCofrinhoBalancesFromMovements,
+        resetAllCofrinhosToZero,
         deleteCofrinho,
         addCofrinhoMovement,
         deleteCofrinhoMovement,
@@ -2047,14 +2850,18 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         setGroceryPlanningMode,
         toggleRicardoWeek,
         updateRicardoWeekAmount,
+        toggleEllenWeek,
+        updateEllenWeekAmount,
         toggleEllenGrocery,
         updateEllenGroceryAmount,
         groceryMonthlyGoal,
         setGroceryMonthlyGoal,
+        updateGroceryPlanSettings,
         addShoppingList,
         updateShoppingList,
         deleteShoppingList,
         copyShoppingList,
+        generateAutoShoppingListFromStock,
         convertShoppingListToTrip,
         addStockItem,
         updateStockItem,
@@ -2062,6 +2869,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         addCestaBasicaRecord,
         deleteCestaBasicaRecord,
         updateSalarySettings,
+        person1Name,
+        person2Name,
+        customCategories,
+        addCustomCategory,
         addInvestmentContribution,
         deleteInvestmentContribution,
         addEmergencyContribution,
@@ -2073,6 +2884,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         totalEmergencyFund,
         renovationCreditTotal,
         renovationCredit: renovationCreditTotal,
+        theme,
+        isDarkMode,
+        toggleTheme,
+        setTheme,
         exportBackupJSON,
         importBackupJSON,
         exportTransactionsCSV,

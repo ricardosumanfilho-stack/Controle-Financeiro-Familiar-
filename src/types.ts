@@ -1,4 +1,4 @@
-export type Person = 'Ricardo' | 'Ellen' | 'Família';
+export type Person = 'Ricardo' | 'Ellen' | 'Família' | string;
 
 export type TransactionType = 'receita' | 'despesa' | 'investimento' | 'transferencia' | 'rendimento';
 
@@ -53,6 +53,8 @@ export interface GroceryTrip {
   totalAmount: number;
   person: Person;
   paymentMethod: PaymentMethod;
+  tripType?: 'semanal' | 'mensal' | 'extraordinaria'; // Compra semanal (feira/hortifruti/reposição), mensal (abastecimento) ou extraordinária
+  weekNumber?: number; // Semana 1, 2, 3, 4 ou 5
   isExtraordinary?: boolean; // Compra regular ou extraordinária
   notes?: string;
   items?: GroceryProduct[];
@@ -72,20 +74,24 @@ export interface ShoppingListItem {
   quantity: number;
   unit: string;
   category: GroceryCategory;
+  categoryGroup?: string;
   priority: 'Alta' | 'Média' | 'Baixa';
   preferredStore: string;
   lastPricePaid?: number;
   lowestHistoricalPrice?: number;
   estimatedPrice: number;
+  actualPrice?: number;
   actualPricePaid?: number;
   completed: boolean;
+  isFromCestaBasica?: boolean;
+  source?: 'cesta_basica' | 'reposicao_estoque' | 'manual';
   notes?: string;
 }
 
 export interface ShoppingList {
   id: string;
   name: string;
-  type: 'semanal' | 'mensal' | 'personalizada';
+  type: 'semanal' | 'mensal' | 'personalizada' | 'reposicao';
   monthKey: string;
   createdAt: string;
   estimatedTotal?: number;
@@ -97,6 +103,7 @@ export interface StockItem {
   id: string;
   product: string;
   category: GroceryCategory;
+  categoryGroup?: string;
   lastPurchaseDate: string;
   quantity: number;
   unit: string;
@@ -106,6 +113,8 @@ export interface StockItem {
   store: string;
   status: 'suficiente' | 'baixo' | 'esgotado';
   isFromCestaBasica?: boolean;
+  purchaseHistoryIntervalDays?: number;
+  consumptionRatePerWeek?: number;
   notes?: string;
   isDemo?: boolean;
 }
@@ -145,12 +154,19 @@ export interface Transaction {
   notes?: string;
   isDemo?: boolean;
   cardId?: string;
+  purchaseDate?: string;
   installmentInfo?: {
     current: number;
     total: number;
     purchaseId?: string;
   };
+  subscriptionId?: string;
+  isCardSubscription?: boolean;
   groceryTripId?: string;
+  cofrinhoMovementId?: string;
+  cofrinhoId?: string;
+  investmentContributionId?: string;
+  emergencyContributionId?: string;
 }
 
 export interface CreditCard {
@@ -163,6 +179,24 @@ export interface CreditCard {
   color: string;
   brand?: string;
   isDemo?: boolean;
+}
+
+export interface CardSubscription {
+  id: string;
+  name?: string; // Nome do serviço (ex: Seguradora do Carro, YouTube Music)
+  description: string; // alias/compat
+  amount: number;
+  person: Person;
+  cardId: string;
+  category: string;
+  billingDay?: number; // Dia de cobrança (ex: dia 5 ou baseado no cartão)
+  startMonth?: string; // YYYY-MM a partir de quando a assinatura começou
+  endMonth?: string; // YYYY-MM caso tenha sido cancelada em um mês futuro
+  isActive?: boolean;
+  status?: 'active' | 'paused' | 'cancelled';
+  notes?: string;
+  isDemo?: boolean;
+  createdAt?: string;
 }
 
 export interface InstallmentPurchase {
@@ -191,7 +225,10 @@ export interface InstallmentPurchase {
 export interface GroceryWeekConfig {
   weekIndex: number;
   weekLabel: string;
+  dateRangeLabel?: string; // ex: "01 a 07 de Agosto"
   plannedAmount: number;
+  carryOverFromPrevious?: number; // Saldo que veio da semana anterior (+ sobra ou - estouro)
+  adjustedGoal?: number; // Meta ajustada disponível para esta semana
   actualAmount: number;
   completed: boolean;
   paid?: boolean;
@@ -202,12 +239,18 @@ export interface GroceryMonthPlan {
   mode: 'opcao_a' | 'opcao_b';
   totalWeeks: number; // 4 ou 5
   weeksCount?: number;
+  monthlyGoal?: number; // Meta total do mês (ex: R$ 1.000)
   ricardoWeeklyPlanned: number; // R$ 150
   ricardoTotalPlanned?: number;
   ricardoWeeks: GroceryWeekConfig[];
+  ellenPlanningType?: 'mensal' | 'semanal'; // Mensal (abastecimento) ou Semanal
   ellenMonthlyPlanned: number; // R$ 400
+  ellenWeeklyPlanned?: number; // R$ 100 por semana (se semanal)
   ellenActualAmount: number;
   ellenCompleted: boolean;
+  ellenWeeks?: GroceryWeekConfig[];
+  carryOverEnabled?: boolean; // Permite transferir a sobra/estouro entre semanas consecutivas Ricardo
+  ellenCarryOverEnabled?: boolean; // Permite transferir a sobra/estouro entre semanas consecutivas Ellen
 }
 
 export type CofrinhoType = 'reserva' | 'casa' | 'manutencao' | 'lazer' | 'aluguel_futuro' | 'reforma' | 'outro';
@@ -260,6 +303,9 @@ export interface CofrinhoMovement {
   isExtraordinaryShare?: boolean;
   subPurpose?: string;
   destinationCofrinhoId?: string; // Usado em transferências internas entre cofrinhos
+  transactionId?: string;
+  emergencyContributionId?: string;
+  investmentContributionId?: string;
   notes?: string;
   isDemo?: boolean;
 }
@@ -271,6 +317,8 @@ export interface InvestmentContribution {
   amount: number;
   targetAsset: string;
   status?: MonthlyAporteStatus;
+  transactionId?: string;
+  cofrinhoMovementId?: string;
   notes?: string;
   isDemo?: boolean;
 }
@@ -283,6 +331,8 @@ export interface EmergencyFundContribution {
   institution: string;
   isExtraordinary?: boolean;
   status?: MonthlyAporteStatus;
+  transactionId?: string;
+  cofrinhoMovementId?: string;
   notes?: string;
   isDemo?: boolean;
 }
@@ -319,12 +369,16 @@ export interface CofrinhoProjection {
 }
 
 export interface SalarySettings {
+  person1Name?: string; // Padrão: 'Ricardo'
+  person2Name?: string; // Padrão: 'Ellen'
   salaryRicardo: number; // R$ 5.300
   salaryEllen: number; // R$ 1.600
   ricardoNetSalary: number; // R$ 5.300
   ricardoAdvanceSalary: number; // R$ 2.120
   ricardoMainSalary: number; // R$ 3.180
   ellenNetSalary: number; // R$ 1.600
+  ellenAdvanceSalary?: number; // Adiantamento Ellen (ex: R$ 640 ou personalizável)
+  ellenMainSalary?: number; // Saldo Salário Principal Ellen (ex: R$ 960)
 }
 
 export interface MonthSummary {
@@ -362,6 +416,10 @@ export interface MonthSummary {
   // Faturas de Cartão
   ricardoInvoiceTotal: number;
   ellenInvoiceTotal: number;
+  cardSubscriptionsTotal?: number;
+  ricardoSubscriptionsTotal?: number;
+  ellenSubscriptionsTotal?: number;
+  totalInvoicesAmount?: number;
   
   // Supermercado
   groceryGoal: number;

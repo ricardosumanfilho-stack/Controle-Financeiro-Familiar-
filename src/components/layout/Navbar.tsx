@@ -1,19 +1,21 @@
 import React from 'react';
 import { useFinance } from '../../context/FinanceContext';
 import { addMonthsToKey, formatMonthYearBR } from '../../utils/formatters';
-import { ChevronLeft, ChevronRight, Plus, Download, Sparkles, Wallet, FileSpreadsheet } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Download, Sparkles, Wallet, FileSpreadsheet, Sun, Moon, Database } from 'lucide-react';
 import { ActiveTab } from '../../types';
 
 interface NavbarProps {
   onOpenNewTransaction: () => void;
   onOpenExportImport: () => void;
   onOpenGoogleSheets: () => void;
+  onOpenSupabase?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   onOpenNewTransaction,
   onOpenExportImport,
   onOpenGoogleSheets,
+  onOpenSupabase,
 }) => {
   const {
     activeTab,
@@ -22,6 +24,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     setSelectedMonth,
     hasDemoData,
     alerts,
+    theme,
+    isDarkMode,
+    toggleTheme,
   } = useFinance();
 
   const handlePrevMonth = () => {
@@ -99,10 +104,36 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action buttons */}
           <div className="flex items-center gap-2">
+            {/* Dark/Light Mode Toggle Button */}
+            <button
+              id="theme-toggle-btn"
+              type="button"
+              onClick={toggleTheme}
+              className="p-2 text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-700 transition-all flex items-center justify-center shadow-xs cursor-pointer"
+              title={isDarkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
+              aria-label={isDarkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
+            >
+              {isDarkMode ? (
+                <Sun className="w-4 h-4 text-amber-400" />
+              ) : (
+                <Moon className="w-4 h-4 text-slate-700" />
+              )}
+            </button>
+
+            <button
+              id="nav-supabase-btn"
+              onClick={onOpenSupabase}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-xl border border-emerald-500/30 transition-colors shadow-xs cursor-pointer"
+              title="Integração Supabase & Migrations"
+            >
+              <Database className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span className="hidden sm:inline">Supabase</span>
+            </button>
+
             <button
               id="nav-sheets-btn"
               onClick={onOpenGoogleSheets}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 rounded-xl border border-emerald-200 dark:border-emerald-800 transition-colors shadow-xs"
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-700 transition-colors shadow-xs cursor-pointer"
               title="Sincronizar com Google Sheets"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />

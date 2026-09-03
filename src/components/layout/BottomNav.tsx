@@ -14,11 +14,18 @@ import {
   MoreHorizontal,
   X,
   Users,
+  Sun,
+  Moon,
+  Database,
 } from 'lucide-react';
 import { ActiveTab } from '../../types';
 
-export const BottomNav: React.FC = () => {
-  const { activeTab, setActiveTab, alerts } = useFinance();
+interface BottomNavProps {
+  onOpenSupabase?: () => void;
+}
+
+export const BottomNav: React.FC<BottomNavProps> = ({ onOpenSupabase }) => {
+  const { activeTab, setActiveTab, alerts, isDarkMode, toggleTheme } = useFinance();
   const [isMoreOpen, setIsMoreOpen] = useState(false);
 
   const mainItems: { id: ActiveTab; label: string; icon: React.FC<{ className?: string }> }[] = [
@@ -91,6 +98,59 @@ export const BottomNav: React.FC = () => {
                   </button>
                 );
               })}
+            </div>
+
+            {/* Botão de Integração Supabase */}
+            {onOpenSupabase && (
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMoreOpen(false);
+                    onOpenSupabase();
+                  }}
+                  className="w-full flex items-center justify-between p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-500">
+                      <Database className="w-4 h-4" />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-xs font-bold">Supabase & Migrations</div>
+                      <div className="text-[11px] text-emerald-600/80 dark:text-emerald-400/80">
+                        PostgreSQL na nuvem e sincronização
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-emerald-600 text-white shadow-xs">
+                    Abrir
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {/* Alternador de Tema Escuro / Claro */}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="w-full flex items-center justify-between p-3 rounded-2xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-xl ${isDarkMode ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-600'}`}>
+                    {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                  </div>
+                  <div className="text-left">
+                    <div className="text-xs font-bold">Aparência do Aplicativo</div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Modo atual: <strong className="text-slate-700 dark:text-slate-300">{isDarkMode ? 'Escuro' : 'Claro'}</strong>
+                    </div>
+                  </div>
+                </div>
+                <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xs">
+                  {isDarkMode ? 'Mudar p/ Claro' : 'Mudar p/ Escuro'}
+                </span>
+              </button>
             </div>
           </div>
         </div>

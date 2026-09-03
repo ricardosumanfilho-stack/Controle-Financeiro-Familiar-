@@ -1,7 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useFinance } from '../../context/FinanceContext';
 import { Person, Transaction, TransactionType } from '../../types';
-import { formatCurrency, formatDateBR, getPersonBadgeColor } from '../../utils/formatters';
+import { formatCurrency, formatDateBR, formatMonthYearBR, getPersonBadgeColor } from '../../utils/formatters';
+import { ConfirmModal } from '../common/ConfirmModal';
+import { Modal } from '../common/Modal';
 import {
   Plus,
   Search,
@@ -15,6 +17,9 @@ import {
   CreditCard,
   ShoppingCart,
   Calendar,
+  AlertTriangle,
+  RotateCcw,
+  PiggyBank,
 } from 'lucide-react';
 
 interface TransactionsViewProps {
@@ -30,15 +35,26 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     transactions,
     selectedMonth,
     deleteTransaction,
+    deleteInstallmentPurchase,
+    deleteInstallmentFromMonth,
     toggleTransactionPaid,
+    person1Name,
+    person2Name,
   } = useFinance();
 
+  const p1 = person1Name || 'Ricardo';
+  const p2 = person2Name || 'Ellen';
+
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedPerson, setSelectedPerson] = useState<'Todos' | Person>('Todos');
+  const [selectedPerson, setSelectedPerson] = useState<'Todos' | string>('Todos');
   const [selectedType, setSelectedType] = useState<'Todos' | TransactionType>('Todos');
   const [selectedStatus, setSelectedStatus] = useState<'Todos' | 'pago' | 'pendente'>('Todos');
   const [selectedCategory, setSelectedCategory] = useState<string>('Todas');
   const [allMonthsFilter, setAllMonthsFilter] = useState(false);
+
+  // Deletion modal state
+  const [transactionToDelete, setTransactionToDelete] = useState<Transaction | null>(null);
+  const [showInstallmentDeleteModal, setShowInstallmentDeleteModal] = useState(false);
 
   // Extract available categories
   const availableCategories = useMemo(() => {
@@ -47,12 +63,32 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     return ['Todas', ...Array.from(set)];
   }, [transactions]);
 
+  const hasActiveFilters =
+    searchTerm.trim() !== '' ||
+    selectedPerson !== 'Todos' ||
+    selectedType !== 'Todos' ||
+    selectedStatus !== 'Todos' ||
+    selectedCategory !== 'Todas';
+
+  const handleClearFilters = () => {
+    setSearchTerm('');
+    setSelectedPerson('Todos');
+    setSelectedType('Todos');
+    setSelectedStatus('Todos');
+    setSelectedCategory('Todas');
+  };
+
   // Filtered transactions
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
-      // Month filter
-      if (!allMonthsFilter && !tx.date.startsWith(selectedMonth)) {
-        return false;
+      // Month filter: Check date, competence month or purchase date
+      if (!allMonthsFilter) {
+        const matchesDate = tx.date && tx.date.startsWith(selectedMonth);
+        const matchesCompetence = tx.competenceMonth === selectedMonth;
+        const matchesPurchaseDate = tx.purchaseDate && tx.purchaseDate.startsWith(selectedMonth);
+        if (!matchesDate && !matchesCompetence && !matchesPurchaseDate) {
+          return false;
+        }
       }
       // Person filter
       if (selectedPerson !== 'Todos' && tx.person !== selectedPerson) {
@@ -94,17 +130,54 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const filterStats = useMemo(() => {
     let income = 0;
     let expense = 0;
+    let investment = 0;
+    let transfer = 0;
     filteredTransactions.forEach((t) => {
       if (t.type === 'receita') income += t.amount;
+      else if (t.type === 'investimento') investment += t.amount;
+      else if (t.type === 'transferencia') transfer += t.amount;
       else expense += t.amount;
     });
     return {
       income,
       expense,
-      balance: income - expense,
+      investment,
+      transfer,
+      balance: income - expense - investment,
       count: filteredTransactions.length,
     };
   }, [filteredTransactions]);
+
+  const handleOpenDelete = (tx: Transaction) => {
+    setTransactionToDelete(tx);
+    if (tx.installmentInfo?.purchaseId) {
+      setShowInstallmentDeleteModal(true);
+    }
+  };
+
+  const handleConfirmSingleDelete = () => {
+    if (transactionToDelete) {
+      deleteTransaction(transactionToDelete.id);
+      setTransactionToDelete(null);
+    }
+  };
+
+  const handleConfirmInstallmentDelete = (mode: 'subsequent' | 'all' | 'single') => {
+    if (transactionToDelete) {
+      if (mode === 'subsequent' && transactionToDelete.installmentInfo?.purchaseId) {
+        deleteInstallmentFromMonth(
+          transactionToDelete.installmentInfo.purchaseId,
+          transactionToDelete.installmentInfo.current || 1
+        );
+      } else if (mode === 'all' && transactionToDelete.installmentInfo?.purchaseId) {
+        deleteInstallmentPurchase(transactionToDelete.installmentInfo.purchaseId);
+      } else {
+        deleteTransaction(transactionToDelete.id);
+      }
+      setTransactionToDelete(null);
+      setShowInstallmentDeleteModal(false);
+    }
+  };
 
   return (
     <div className="space-y-6 pb-12">
@@ -165,7 +238,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           <span className="text-xs font-bold text-slate-500 dark:text-slate-400 mr-1 flex items-center gap-1">
             <Filter className="w-3.5 h-3.5" /> Responsável:
           </span>
-          {(['Todos', 'Ricardo', 'Ellen', 'Família'] as ('Todos' | Person)[]).map((p) => {
+          {['Todos', p1, p2].map((p) => {
             const active = selectedPerson === p;
             return (
               <button
@@ -229,10 +302,26 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             </select>
           </div>
         </div>
+
+        {/* Clear Filters helper button if filters are active */}
+        {hasActiveFilters && (
+          <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+            <span className="text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+              <Filter className="w-3.5 h-3.5" /> Filtros ativos refinando os lançamentos
+            </span>
+            <button
+              type="button"
+              onClick={handleClearFilters}
+              className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+            >
+              <RotateCcw className="w-3 h-3" /> Limpar Filtros
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Filter Summary Header */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 rounded-xl flex items-center justify-between">
           <div>
             <span className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider block">
@@ -257,6 +346,18 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           <TrendingDown className="w-5 h-5 text-red-600" />
         </div>
 
+        <div className="p-3.5 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 rounded-xl flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider block">
+              Investimentos Filtrados
+            </span>
+            <span className="text-lg font-black text-blue-900 dark:text-blue-200">
+              {formatCurrency(filterStats.investment)}
+            </span>
+          </div>
+          <PiggyBank className="w-5 h-5 text-blue-600" />
+        </div>
+
         <div className="p-3.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between">
           <div>
             <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider block">
@@ -264,13 +365,13 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             </span>
             <span
               className={`text-lg font-black ${
-                filterStats.balance >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600'
+                filterStats.balance >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-amber-600'
               }`}
             >
               {formatCurrency(filterStats.balance)}
             </span>
           </div>
-          <span className="text-xs font-semibold text-slate-500">Saldo Líquido</span>
+          <span className="text-[10px] text-slate-400 font-semibold">Líquido</span>
         </div>
       </div>
 
@@ -281,9 +382,17 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
               Nenhum lançamento encontrado para os filtros selecionados.
             </p>
+            {hasActiveFilters && (
+              <button
+                onClick={handleClearFilters}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl mr-2 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Limpar Filtros
+              </button>
+            )}
             <button
               onClick={onOpenNewTransaction}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-blue-600 text-white rounded-xl shadow-xs hover:bg-blue-700"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-blue-600 text-white rounded-xl shadow-xs hover:bg-blue-700 transition-colors"
             >
               <Plus className="w-4 h-4" /> Cadastrar Lançamento
             </button>
@@ -346,7 +455,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
                         {tx.isReimbursable && (
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 font-semibold">
-                            Reembolso
+                            Renda Extra
                           </span>
                         )}
 
@@ -362,10 +471,16 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                             <ShoppingCart className="w-3 h-3" /> Mercado
                           </span>
                         )}
+
+                        {/* Competence Month Badge - Prominently showing the month this expense/income belongs to */}
+                        <span className="text-[11px] px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60 font-semibold flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-blue-500" />
+                          Competência: {formatMonthYearBR(tx.competenceMonth || tx.date.slice(0, 7))}
+                        </span>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                        <span>{formatDateBR(tx.date)}</span>
+                        <span>Data: {formatDateBR(tx.date)}</span>
                         <span>•</span>
                         <span>{tx.category}</span>
                         {tx.accountOrPot && (
@@ -395,19 +510,37 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                     <div className="text-left sm:text-right">
                       <span
                         className={`text-base font-black ${
-                          isIncome
+                          tx.type === 'receita'
                             ? 'text-emerald-600 dark:text-emerald-400'
+                            : tx.type === 'investimento'
+                            ? 'text-blue-600 dark:text-blue-400'
+                            : tx.type === 'transferencia'
+                            ? 'text-purple-600 dark:text-purple-400'
                             : 'text-slate-900 dark:text-slate-100'
                         }`}
                       >
-                        {isIncome ? '+' : '-'} {formatCurrency(tx.amount)}
+                        {tx.type === 'receita'
+                          ? `+ ${formatCurrency(tx.amount)}`
+                          : tx.type === 'investimento'
+                          ? `↗ ${formatCurrency(tx.amount)}`
+                          : tx.type === 'transferencia'
+                          ? `↔ ${formatCurrency(tx.amount)}`
+                          : `- ${formatCurrency(tx.amount)}`}
                       </span>
                       <span
                         className={`block text-[11px] font-semibold ${
-                          tx.paid ? 'text-emerald-600' : 'text-amber-600'
+                          tx.type === 'investimento'
+                            ? 'text-blue-600 dark:text-blue-400'
+                            : tx.paid
+                            ? 'text-emerald-600'
+                            : 'text-amber-600'
                         }`}
                       >
-                        {tx.paid ? 'Concluído' : 'Pendente'}
+                        {tx.type === 'investimento'
+                          ? 'Aporte / Investimento'
+                          : tx.paid
+                          ? 'Concluído'
+                          : 'Pendente'}
                       </span>
                     </div>
 
@@ -422,13 +555,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (window.confirm(`Deseja excluir "${tx.description}"?`)) {
-                            deleteTransaction(tx.id);
-                          }
-                        }}
+                        onClick={() => handleOpenDelete(tx)}
                         className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors"
-                        title="Excluir"
+                        title="Excluir Lançamento"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -440,6 +569,95 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Confirmation Modal for Single / Standard Transactions */}
+      {transactionToDelete && !showInstallmentDeleteModal && (
+        <ConfirmModal
+          isOpen={Boolean(transactionToDelete)}
+          onClose={() => setTransactionToDelete(null)}
+          onConfirm={handleConfirmSingleDelete}
+          title="Excluir Lançamento"
+          message={`Tem certeza que deseja excluir "${transactionToDelete.description}" no valor de ${formatCurrency(transactionToDelete.amount)}? Esta ação não pode ser desfeita.`}
+          confirmText="Sim, Excluir"
+          cancelText="Cancelar"
+          confirmVariant="danger"
+        />
+      )}
+
+      {/* Modal for Installment Transactions (Choose Single Installment vs Whole Series) */}
+      {transactionToDelete && showInstallmentDeleteModal && (
+        <Modal
+          isOpen={showInstallmentDeleteModal}
+          onClose={() => {
+            setShowInstallmentDeleteModal(false);
+            setTransactionToDelete(null);
+          }}
+          title="Excluir Parcela de Cartão"
+          maxWidth="sm"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3.5 bg-red-500/10 border border-red-500/20 rounded-xl">
+              <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+              <div className="text-xs text-slate-300 space-y-1">
+                <p className="font-semibold text-slate-200">
+                  {transactionToDelete.description} ({formatCurrency(transactionToDelete.amount)})
+                </p>
+                <p className="text-slate-400">
+                  Este lançamento faz parte de uma série parcelada ({transactionToDelete.installmentInfo?.current}/{transactionToDelete.installmentInfo?.total}). Como deseja proceder?
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={() => handleConfirmInstallmentDelete('subsequent')}
+                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl text-left transition-colors flex items-center justify-between shadow-xs"
+              >
+                <div>
+                  <div className="text-white font-bold">Excluir deste mês e dos meses subsequentes</div>
+                  <div className="text-[11px] text-red-100 font-normal">Remove da parcela {transactionToDelete.installmentInfo?.current} até a {transactionToDelete.installmentInfo?.total}</div>
+                </div>
+                <Trash2 className="w-4 h-4 text-white shrink-0 ml-2" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleConfirmInstallmentDelete('all')}
+                className="w-full py-2.5 px-4 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-left transition-colors flex items-center justify-between"
+              >
+                <div>
+                  <div className="text-slate-200 font-semibold">Excluir toda a série ({transactionToDelete.installmentInfo?.total} parcelas)</div>
+                  <div className="text-[11px] text-slate-400 font-normal">Remove todas as parcelas passadas, presentes e futuras</div>
+                </div>
+                <Trash2 className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-2" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleConfirmInstallmentDelete('single')}
+                className="w-full py-2 px-4 text-xs text-slate-300 bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/70 rounded-xl text-left transition-colors flex items-center justify-between"
+              >
+                <span>Excluir <strong>somente esta parcela</strong> ({transactionToDelete.installmentInfo?.current}/{transactionToDelete.installmentInfo?.total})</span>
+                <Trash2 className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-2" />
+              </button>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowInstallmentDeleteModal(false);
+                  setTransactionToDelete(null);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

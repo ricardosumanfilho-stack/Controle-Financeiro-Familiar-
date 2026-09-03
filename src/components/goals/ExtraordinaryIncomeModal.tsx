@@ -39,11 +39,16 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
     emergencySettings,
     totalEmergencyFund,
     selectedMonth,
+    person1Name,
+    person2Name,
   } = useFinance();
+
+  const p1 = person1Name || 'Ricardo';
+  const p2 = person2Name || 'Ellen';
 
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('1500');
-  const [person, setPerson] = useState<Person>('Ricardo');
+  const [person, setPerson] = useState<Person>(p1);
   const [date, setDate] = useState('');
   const [notes, setNotes] = useState('');
   const [successInfo, setSuccessInfo] = useState<{
@@ -57,13 +62,13 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
     if (isOpen) {
       setDescription('');
       setAmount('1500');
-      setPerson('Ricardo');
+      setPerson(p1);
       const today = new Date().toISOString().slice(0, 10);
       setDate(today.startsWith(selectedMonth) ? today : `${selectedMonth}-10`);
       setNotes('');
       setSuccessInfo(null);
     }
-  }, [isOpen, selectedMonth]);
+  }, [isOpen, selectedMonth, p1]);
 
   const numAmount = parseFloat(amount.replace(',', '.')) || 0;
 
@@ -110,7 +115,7 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
       isOpen={isOpen}
       onClose={onClose}
       title="Divisão de Renda Extraordinária"
-      subtitle="Distribuição estratégica da regra 70% Reserva / 20% Casa e Manutenção / 10% Lazer"
+      subtitle="Distribuição estratégica da regra 70% Reserva / 20% Compra da Casa / 10% Lazer e Viagens"
     >
       {successInfo ? (
         <div className="space-y-4 text-center py-4">
@@ -139,7 +144,7 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
 
             <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-xl">
               <span className="text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300 block">
-                20% Casa/Manutenção
+                20% Fundo Casa Nova
               </span>
               <span className="text-base font-black text-amber-800 dark:text-amber-100">
                 {formatCurrency(successInfo.casaAmount)}
@@ -148,7 +153,7 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
 
             <div className="p-3 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-900/50 rounded-xl">
               <span className="text-[10px] font-bold uppercase tracking-wide text-purple-700 dark:text-purple-300 block">
-                10% Cofrinho Lazer
+                10% Lazer e Viagens
               </span>
               <span className="text-base font-black text-purple-800 dark:text-purple-100">
                 {formatCurrency(successInfo.lazerAmount)}
@@ -209,8 +214,8 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
               Quem recebeu?
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['Ricardo', 'Ellen', 'Família'] as Person[]).map((p) => {
+            <div className="grid grid-cols-2 gap-2">
+              {[p1, p2].map((p, idx) => {
                 const active = person === p;
                 return (
                   <button
@@ -219,11 +224,9 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
                     onClick={() => setPerson(p)}
                     className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all ${
                       active
-                        ? p === 'Ricardo'
+                        ? idx === 0
                           ? 'bg-blue-600 text-white border-blue-600'
-                          : p === 'Ellen'
-                          ? 'bg-rose-600 text-white border-rose-600'
-                          : 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-rose-600 text-white border-rose-600'
                         : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
                     }`}
                   >
@@ -318,10 +321,10 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
                   </div>
                   <div>
                     <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                      20% — Casa e Manutenção
+                      20% — Fundo Compra da Casa Nova
                     </span>
                     <span className="text-[11px] text-slate-400">
-                      Zelo do lar, manutenção do carro, reformas ou patrimônio
+                      Entrada, documentação e aquisição da casa própria
                     </span>
                   </div>
                 </div>
@@ -338,10 +341,10 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
                   </div>
                   <div>
                     <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                      10% — Cofrinho Lazer
+                      10% — Lazer e Viagens
                     </span>
                     <span className="text-[11px] text-slate-400">
-                      Passeios, restaurantes, viagens de férias e momentos de lazer
+                      Passeios, restaurantes, viagens de férias e momentos em família
                     </span>
                   </div>
                 </div>
@@ -354,7 +357,7 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
             <div className="flex items-start gap-2 p-2 bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 rounded-xl text-[11px]">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
-                <strong>Atenção:</strong> Reembolsos corporativos de despesas não configuram renda extraordinária e devem ser registrados como reembolso padrão, não aplicando a regra 70/20/10.
+                <strong>Atenção:</strong> Entradas marcadas como Renda Extra ou reembolsos não alteram a base de proventos regulares e não exigem divisão obrigatória pela regra 70/20/10.
               </span>
             </div>
           </div>

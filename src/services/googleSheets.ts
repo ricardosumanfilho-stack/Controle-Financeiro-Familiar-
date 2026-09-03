@@ -4,6 +4,7 @@ import {
   PaymentMethod,
   GroceryTrip,
   CreditCard,
+  CardSubscription,
   Cofrinho,
   RenovationExpense,
   MonthSummary,
@@ -26,6 +27,7 @@ export interface SyncOptions {
   summary: MonthSummary;
   transactions: Transaction[];
   cards: CreditCard[];
+  cardSubscriptions?: CardSubscription[];
   cofrinhos: Cofrinho[];
   groceryTrips: GroceryTrip[];
   renovationExpenses: RenovationExpense[];
@@ -231,7 +233,7 @@ export async function exportToGoogleSheets(
       t.date,
       t.competenceMonth || getMonthKey(t.date),
       t.description,
-      t.type.toUpperCase(),
+      (t.type || 'despesa').toUpperCase(),
       t.category,
       t.subcategory || '',
       t.person,
@@ -260,7 +262,18 @@ export async function exportToGoogleSheets(
     ],
     ...cards.map((c) => {
       const cardTxs = transactions.filter((t) => t.cardId === c.id && (t.competenceMonth || getMonthKey(t.date)) === monthKey);
-      const spent = cardTxs.reduce((sum, t) => sum + t.amount, 0);
+      const txSpent = cardTxs.reduce((sum, t) => sum + t.amount, 0);
+      const cardSubs = (options.cardSubscriptions || []).filter(
+        (sub) =>
+          sub.cardId === c.id &&
+          sub.status !== 'paused' &&
+          sub.status !== 'cancelled' &&
+          sub.isActive !== false &&
+          (!sub.startMonth || sub.startMonth <= monthKey) &&
+          (!sub.endMonth || sub.endMonth >= monthKey)
+      );
+      const subsSpent = cardSubs.reduce((sum, sub) => sum + sub.amount, 0);
+      const spent = txSpent + subsSpent;
       const limit = c.monthlyLimitGoal || 500;
       const pct = limit > 0 ? (spent / limit) * 100 : 0;
       return [
@@ -372,7 +385,7 @@ export async function exportToGoogleSheets(
       r.description,
       r.paidBy,
       r.amount,
-      r.ownerAuthorized.toUpperCase(),
+      (r.ownerAuthorized || 'pendente').toUpperCase(),
       r.acceptedAmount,
       r.underAnalysisAmount,
       r.alreadyCompensatedAmount,

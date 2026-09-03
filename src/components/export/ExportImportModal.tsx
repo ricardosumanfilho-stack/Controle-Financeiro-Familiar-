@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Modal } from '../common/Modal';
+import { ConfirmModal } from '../common/ConfirmModal';
 import { useFinance } from '../../context/FinanceContext';
 import { Download, Upload, Trash2, RefreshCw, FileSpreadsheet, FileJson, CheckCircle2, AlertTriangle } from 'lucide-react';
 
@@ -15,6 +16,7 @@ export const ExportImportModal: React.FC<ExportImportModalProps> = ({ isOpen, on
     importBackupJSON,
     exportTransactionsCSV,
     exportGroceryCSV,
+    exportExcelFull,
     hasDemoData,
     clearDemoData,
     restoreDemoData,
@@ -22,6 +24,7 @@ export const ExportImportModal: React.FC<ExportImportModalProps> = ({ isOpen, on
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importStatus, setImportStatus] = useState<{ success?: boolean; message?: string } | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -96,12 +99,7 @@ export const ExportImportModal: React.FC<ExportImportModalProps> = ({ isOpen, on
               <button
                 type="button"
                 id="clear-demo-btn"
-                onClick={() => {
-                  if (window.confirm('Deseja realmente apagar todos os registros de demonstração? Seus dados personalizados serão mantidos.')) {
-                    clearDemoData();
-                    setImportStatus({ success: true, message: 'Dados de demonstração removidos com sucesso!' });
-                  }
-                }}
+                onClick={() => setShowClearConfirm(true)}
                 className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-xs transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -161,7 +159,24 @@ export const ExportImportModal: React.FC<ExportImportModalProps> = ({ isOpen, on
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <button
+              type="button"
+              id="export-excel-full-btn"
+              onClick={exportExcelFull}
+              className="flex flex-col items-center text-center p-3.5 bg-emerald-50/60 dark:bg-emerald-950/20 hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800 rounded-xl transition-all group"
+            >
+              <div className="p-2.5 bg-emerald-600 text-white rounded-xl mb-2 group-hover:scale-105 transition-transform shadow-xs">
+                <FileSpreadsheet className="w-5 h-5" />
+              </div>
+              <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300">
+                Planilha Excel (.xlsx)
+              </span>
+              <span className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
+                8 abas formatadas & coerentes para PC
+              </span>
+            </button>
+
             <button
               type="button"
               id="export-json-btn"
@@ -172,10 +187,10 @@ export const ExportImportModal: React.FC<ExportImportModalProps> = ({ isOpen, on
                 <FileJson className="w-5 h-5" />
               </div>
               <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                Backup Completo (JSON)
+                Backup JSON
               </span>
               <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                Salva todas as configurações e registros
+                Restauração de sistema e dados
               </span>
             </button>
 
@@ -185,14 +200,14 @@ export const ExportImportModal: React.FC<ExportImportModalProps> = ({ isOpen, on
               onClick={exportTransactionsCSV}
               className="flex flex-col items-center text-center p-3.5 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl transition-all group"
             >
-              <div className="p-2.5 bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 rounded-xl mb-2 group-hover:scale-105 transition-transform">
-                <FileSpreadsheet className="w-5 h-5" />
+              <div className="p-2.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl mb-2 group-hover:scale-105 transition-transform">
+                <Download className="w-5 h-5" />
               </div>
               <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
                 Lançamentos (CSV)
               </span>
               <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                Compatível com Excel e Google Planilhas
+                Tabela simples para planilhas
               </span>
             </button>
 
@@ -209,7 +224,7 @@ export const ExportImportModal: React.FC<ExportImportModalProps> = ({ isOpen, on
                 Supermercado (CSV)
               </span>
               <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                Histórico de compras e estabelecimentos
+                Compras e cupons de desconto
               </span>
             </button>
           </div>
@@ -262,6 +277,20 @@ export const ExportImportModal: React.FC<ExportImportModalProps> = ({ isOpen, on
           </button>
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={showClearConfirm}
+        onClose={() => setShowClearConfirm(false)}
+        onConfirm={() => {
+          clearDemoData();
+          setImportStatus({ success: true, message: 'Dados de demonstração removidos com sucesso!' });
+        }}
+        title="Apagar Dados de Demonstração"
+        message="Deseja realmente apagar todos os registros de demonstração? Seus lançamentos personalizados criados serão mantidos intactos."
+        confirmText="Sim, Apagar Demonstração"
+        cancelText="Cancelar"
+        confirmVariant="danger"
+      />
     </Modal>
   );
 };

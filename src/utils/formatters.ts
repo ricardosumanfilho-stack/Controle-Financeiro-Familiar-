@@ -55,6 +55,23 @@ export const addMonthsToKey = (monthKey: string, count: number): string => {
   return `${year}-${String(month).padStart(2, '0')}`;
 };
 
+/**
+ * Calculates the invoice competence month (YYYY-MM) for a credit card purchase.
+ * In Brazil: If purchase day >= card's closing day, it goes to next month's invoice.
+ */
+export const calculateCardCompetenceMonth = (purchaseDateStr: string, closingDay?: number): string => {
+  if (!purchaseDateStr) return '';
+  const monthKey = purchaseDateStr.slice(0, 7);
+  if (!closingDay || isNaN(closingDay) || closingDay < 1) return monthKey;
+  const day = parseInt(purchaseDateStr.slice(8, 10), 10);
+  if (isNaN(day)) return monthKey;
+
+  if (day >= closingDay) {
+    return addMonthsToKey(monthKey, 1);
+  }
+  return monthKey;
+};
+
 export const getWeeksInMonth = (monthKey: string): number => {
   if (!monthKey) return 4;
   const [yearStr, monthStr] = monthKey.split('-');
@@ -107,7 +124,6 @@ export const INCOME_CATEGORIES = [
   'Férias',
   'Décimo terceiro',
   'Restituição do Imposto de Renda',
-  'Reembolso de trabalho',
   'Renda extra',
   'Rendimento de Cofrinho',
   'Outras receitas',
@@ -158,7 +174,7 @@ export const classifyIncomeCategory = (category: string): {
     'Adiantamento salarial de Ellen',
   ].includes(category);
 
-  const isReimbursement = category === 'Reembolso de trabalho';
+  const isReimbursement = category.toLowerCase().includes('renda extra') || category.toLowerCase().includes('reembolso');
   const isYield = category === 'Rendimento de Cofrinho';
   const isExtraordinary = !isSalaryRecurring && !isReimbursement && !isYield;
 

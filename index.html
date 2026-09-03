@@ -6,8 +6,20 @@
     <title>Gestão Financeira Familiar</title>
     <meta name="description" content="Controle financeiro familiar com separação Ricardo, Ellen e Família, faturas, supermercado e investimentos." />
     <meta name="theme-color" content="#020617" />
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('fin_family_theme');
+          if (saved === 'light') {
+            document.documentElement.classList.remove('dark');
+          } else if (saved === 'dark') {
+            document.documentElement.classList.add('dark');
+          }
+        } catch(e) {}
+      })();
+    </script>
   </head>
-  <body class="bg-slate-950 text-slate-100 antialiased min-h-screen selection:bg-emerald-500 selection:text-slate-950">
+  <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased min-h-screen selection:bg-emerald-500 selection:text-slate-950 transition-colors duration-150">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

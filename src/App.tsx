@@ -18,21 +18,29 @@ import { TransactionModal } from './components/transactions/TransactionModal';
 import { InstallmentModal } from './components/cards/InstallmentModal';
 import { CardModal } from './components/cards/CardModal';
 import { GroceryModal } from './components/grocery/GroceryModal';
+import { LiveMarketModal } from './components/grocery/LiveMarketModal';
 import { InvestmentModal } from './components/goals/InvestmentModal';
 import { EmergencyModal } from './components/goals/EmergencyModal';
 import { ExportImportModal } from './components/export/ExportImportModal';
 import { GoogleSheetsModal } from './components/sheets/GoogleSheetsModal';
-import { CreditCard, GroceryTrip, Transaction } from './types';
+import { SupabaseModal } from './components/supabase/SupabaseModal';
+import { CreditCard, GroceryTrip, Transaction, InstallmentPurchase } from './types';
 import { motion, AnimatePresence } from 'motion/react';
 
 function MainAppContent() {
-  const { activeTab } = useFinance();
+  const { activeTab, shoppingLists, updateShoppingList, convertShoppingListToTrip } = useFinance();
+
+  // Standalone Live Market Mode detection (e.g. ?mode=live-market&listId=xyz)
+  const searchParams = new URLSearchParams(window.location.search);
+  const isLiveMarketParam = searchParams.get('mode') === 'live-market' || window.location.hash.includes('live-market');
+  const targetListId = searchParams.get('listId');
 
   // Modals state
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
   const [isInstallmentModalOpen, setIsInstallmentModalOpen] = useState(false);
+  const [editingInstallment, setEditingInstallment] = useState<InstallmentPurchase | null>(null);
 
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
   const [editingCard, setEditingCard] = useState<CreditCard | null>(null);
@@ -48,6 +56,54 @@ function MainAppContent() {
 
   const [isExportImportModalOpen, setIsExportImportModalOpen] = useState(false);
   const [isGoogleSheetsModalOpen, setIsGoogleSheetsModalOpen] = useState(false);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
+
+  // If in Standalone Live Market Mode, render dedicated full-screen view
+  if (isLiveMarketParam) {
+    const activeList = (targetListId ? shoppingLists.find((l) => l.id === targetListId) : null) || shoppingLists[0];
+
+    if (!activeList) {
+      return (
+        <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center">
+          <div className="p-4 rounded-full bg-slate-900 border border-slate-800 text-emerald-400 mb-4">
+            <span className="text-3xl">🛒</span>
+          </div>
+          <h1 className="text-xl font-bold mb-2">Nenhuma lista de compras ativa</h1>
+          <p className="text-sm text-slate-400 max-w-sm mb-6">
+            Não encontramos a lista solicitada. Crie uma lista ou acerte o link para iniciar o Modo Mercado.
+          </p>
+          <button
+            onClick={() => {
+              window.location.href = window.location.origin + window.location.pathname;
+            }}
+            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl transition-colors shadow-xs"
+          >
+            Voltar ao App Principal
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col font-sans antialiased">
+        <LiveMarketModal
+          isOpen={true}
+          isStandalone={true}
+          onClose={() => {
+            window.location.href = window.location.origin + window.location.pathname;
+          }}
+          list={activeList}
+          onUpdateList={(updatedItems) => {
+            updateShoppingList(activeList.id, { items: updatedItems });
+          }}
+          onFinalizeTrip={({ listId, storeName, totalAmount, person, paymentMethod, tripType, weekNumber, savingsAmount, items }) => {
+            convertShoppingListToTrip(listId, storeName, person, paymentMethod, totalAmount, tripType, weekNumber, savingsAmount, items);
+            window.location.href = window.location.origin + window.location.pathname;
+          }}
+        />
+      </div>
+    );
+  }
 
   const handleOpenNewTransaction = () => {
     setEditingTransaction(null);
@@ -101,6 +157,7 @@ function MainAppContent() {
         onOpenNewTransaction={handleOpenNewTransaction}
         onOpenExportImport={() => setIsExportImportModalOpen(true)}
         onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
+        onOpenSupabase={() => setIsSupabaseModalOpen(true)}
       />
 
       {/* Demo Banner */}
@@ -135,7 +192,14 @@ function MainAppContent() {
 
             {activeTab === 'cards' && (
               <CardsView
-                onOpenNewInstallment={() => setIsInstallmentModalOpen(true)}
+                onOpenNewInstallment={() => {
+                  setEditingInstallment(null);
+                  setIsInstallmentModalOpen(true);
+                }}
+                onEditInstallment={(inst) => {
+                  setEditingInstallment(inst);
+                  setIsInstallmentModalOpen(true);
+                }}
                 onOpenNewCard={handleOpenNewCard}
                 onEditCard={handleEditCard}
               />
@@ -174,14 +238,17 @@ function MainAppContent() {
             )}
 
             {activeTab === 'settings' && (
-              <SettingsView onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)} />
+              <SettingsView
+                onOpenGoogleSheets={() => setIsGoogleSheetsModalOpen(true)}
+                onOpenSupabase={() => setIsSupabaseModalOpen(true)}
+              />
             )}
           </motion.div>
         </AnimatePresence>
       </main>
 
       {/* Mobile Bottom Navigation */}
-      <BottomNav />
+      <BottomNav onOpenSupabase={() => setIsSupabaseModalOpen(true)} />
 
       {/* Modals */}
       <TransactionModal
@@ -192,7 +259,11 @@ function MainAppContent() {
 
       <InstallmentModal
         isOpen={isInstallmentModalOpen}
-        onClose={() => setIsInstallmentModalOpen(false)}
+        onClose={() => {
+          setIsInstallmentModalOpen(false);
+          setEditingInstallment(null);
+        }}
+        installmentToEdit={editingInstallment}
       />
 
       <CardModal
@@ -228,6 +299,11 @@ function MainAppContent() {
       <GoogleSheetsModal
         isOpen={isGoogleSheetsModalOpen}
         onClose={() => setIsGoogleSheetsModalOpen(false)}
+      />
+
+      <SupabaseModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
       />
     </div>
   );

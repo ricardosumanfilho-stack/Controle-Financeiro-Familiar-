@@ -401,7 +401,14 @@ export const MonthlyClosingView: React.FC<MonthlyClosingViewProps> = ({ onOpenGo
               </div>
 
               <div className="py-2.5 flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Despesas Recorrentes (Fixas)</span>
+                <div>
+                  <span className="text-slate-600 dark:text-slate-400">Despesas Recorrentes (Fixas + Assinaturas)</span>
+                  {currentMonthSummary.cardSubscriptionsTotal !== undefined && currentMonthSummary.cardSubscriptionsTotal > 0 && (
+                    <span className="block text-[11px] text-purple-600 dark:text-purple-400">
+                      • Inclui {formatCurrencyBR(currentMonthSummary.cardSubscriptionsTotal)} em assinaturas recorrentes nos cartões
+                    </span>
+                  )}
+                </div>
                 <span className="font-semibold text-slate-900 dark:text-slate-100">
                   -{formatCurrencyBR(currentMonthSummary.recurringExpense)}
                 </span>
@@ -453,12 +460,53 @@ export const MonthlyClosingView: React.FC<MonthlyClosingViewProps> = ({ onOpenGo
                   {formatCurrencyBR(currentMonthSummary.ellenInvoiceTotal)}
                 </span>
               </div>
+              <div className="flex items-center justify-between p-2.5 bg-purple-50/70 dark:bg-purple-950/30 rounded-xl border border-purple-100 dark:border-purple-900/50">
+                <span className="font-semibold text-purple-900 dark:text-purple-200">Total Faturas (Teto R$ 1.000)</span>
+                <span className={`font-bold ${(currentMonthSummary.ricardoInvoiceTotal + currentMonthSummary.ellenInvoiceTotal) <= 1000 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                  {formatCurrencyBR(currentMonthSummary.ricardoInvoiceTotal + currentMonthSummary.ellenInvoiceTotal)}
+                </span>
+              </div>
               <div className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
                 <span>Supermercado (Teto R$ 1.000)</span>
                 <span className={`font-bold ${currentMonthSummary.groceryActualSpent <= currentMonthSummary.groceryGoal ? 'text-emerald-600' : 'text-rose-600'}`}>
                   {formatCurrencyBR(currentMonthSummary.groceryActualSpent)}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Card Informativo de Backup para Pastas do PC */}
+          <div className="bg-emerald-50/50 dark:bg-emerald-950/20 rounded-2xl p-5 border border-emerald-200/80 dark:border-emerald-800/60 space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-emerald-600 text-white rounded-lg">
+                <FileSpreadsheet className="w-4 h-4" />
+              </div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
+                Backup Coerente para PC (.xlsx)
+              </h4>
+            </div>
+            <p className="text-xs text-emerald-800/80 dark:text-emerald-400/90 leading-relaxed">
+              O arquivo de fechamento é exportado com formatação profissional, largura de colunas ajustadas e 8 abas organizadas:
+            </p>
+            <ul className="text-[11px] text-emerald-800/90 dark:text-emerald-400/90 space-y-1 list-disc list-inside">
+              <li><b>01_DRE_e_Resumo:</b> DRE executivo, metas e reserva.</li>
+              <li><b>02_Lancamentos_Mes:</b> Extrato com totais consolidados.</li>
+              <li><b>03_Historico_Completo:</b> Backup de todo o caixa.</li>
+              <li><b>04_Cofrinhos_e_Metas:</b> Saldos, CDI e aportes.</li>
+              <li><b>05_Cartoes_Parcelas:</b> Faturas e saldo devedor.</li>
+              <li><b>06_Supermercado:</b> Histórico e economias de cupons.</li>
+              <li><b>07_Reforma_Aluguel:</b> Benfeitorias e compensações.</li>
+              <li><b>08_Checklist_Fechamento:</b> Prestação de contas auditada.</li>
+            </ul>
+            <div className="pt-2 border-t border-emerald-200/60 dark:border-emerald-800/40">
+              <button
+                type="button"
+                onClick={exportExcelFull}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                Baixar Planilha do Mês (.xlsx)
+              </button>
             </div>
           </div>
         </div>

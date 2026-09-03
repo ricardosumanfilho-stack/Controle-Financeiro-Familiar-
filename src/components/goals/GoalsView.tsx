@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useFinance } from '../../context/FinanceContext';
+import { ConfirmModal } from '../common/ConfirmModal';
 import {
   formatCurrency,
   formatDateBR,
@@ -80,6 +81,7 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
   const [isCdiSettingsOpen, setIsCdiSettingsOpen] = useState(false);
   const [tempCdiRate, setTempCdiRate] = useState(globalCofrinhoSettings.cdiAnnualRate);
   const [appliedYieldSuccess, setAppliedYieldSuccess] = useState(false);
+  const [movementToDelete, setMovementToDelete] = useState<string | null>(null);
 
   const handleOpenCofrinhoModal = (id: string = 'cof-reserva', mode: 'movement' | 'transfer' | 'edit' = 'movement') => {
     setSelectedCofrinhoIdForModal(id);
@@ -209,7 +211,7 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
             Metas, Cofrinhos & Reserva de Emergência
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Reserva de Emergência (8 Meses = R$ 55.200) • Regra 70/20/10 Rendas Extras • Cofrinhos com Rendimento CDI
+            Reserva de Emergência (Ricardo & Ellen) • Fundo Compra da Casa Nova • Lazer e Viagens • Rendimento CDI
           </p>
         </div>
 
@@ -657,14 +659,12 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
                     </button>
                   </div>
 
-                  {(cof.type === 'manutencao' || cof.id === 'cof-manutencao') && (
-                    <button
-                      onClick={() => handleOpenCofrinhoModal(cof.id, 'transfer')}
-                      className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                    >
-                      <ArrowRightLeft className="w-3.5 h-3.5" /> Transferir
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleOpenCofrinhoModal(cof.id, 'transfer')}
+                    className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
+                  >
+                    <ArrowRightLeft className="w-3.5 h-3.5" /> Transferir
+                  </button>
                 </div>
               </div>
             );
@@ -860,14 +860,14 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
               if (activeSubTab === 'cofrinhos') return true;
               return true;
             })
-            .map((mov) => {
+            .map((mov, index) => {
               const cof = cofrinhos.find((c) => c.id === mov.cofrinhoId);
               const personColors = getPersonBadgeColor(mov.person);
               const isAporte = mov.type === 'aporte' || mov.type === 'rendimento';
 
               return (
                 <div
-                  key={mov.id}
+                  key={mov.id ? `${mov.id}-${index}` : `mov-${index}`}
                   className="py-3 px-2 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-xl transition-colors"
                 >
                   <div className="flex items-center gap-3">
@@ -891,7 +891,7 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                          {cof?.name || 'Cofrinho'} ({mov.type.toUpperCase()})
+                          {cof?.name || 'Cofrinho'} ({(mov.type || 'aporte').toUpperCase()})
                         </span>
                         {mov.isExtraordinaryShare && (
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-bold">
@@ -925,12 +925,9 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
                     </span>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm('Deseja excluir esta movimentação?')) {
-                          deleteCofrinhoMovement(mov.id);
-                        }
-                      }}
-                      className="p-1 text-slate-400 hover:text-red-500"
+                      onClick={() => setMovementToDelete(mov.id)}
+                      className="p-1 text-slate-400 hover:text-red-500 rounded-md transition-colors"
+                      title="Excluir Movimentação"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -953,6 +950,24 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
         isOpen={isExtraordinaryModalOpen}
         onClose={() => setIsExtraordinaryModalOpen(false)}
       />
+
+      {movementToDelete && (
+        <ConfirmModal
+          isOpen={Boolean(movementToDelete)}
+          onClose={() => setMovementToDelete(null)}
+          onConfirm={() => {
+            if (movementToDelete) {
+              deleteCofrinhoMovement(movementToDelete);
+              setMovementToDelete(null);
+            }
+          }}
+          title="Excluir Movimentação"
+          message="Tem certeza que deseja excluir esta movimentação do cofrinho? Os saldos serão recalculados automaticamente."
+          confirmText="Sim, Excluir Movimentação"
+          cancelText="Cancelar"
+          confirmVariant="danger"
+        />
+      )}
     </div>
   );
 };

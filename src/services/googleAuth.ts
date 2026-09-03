@@ -91,12 +91,11 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
-    console.error('Erro no Google Sign-In:', error);
-    if (error.code === 'auth/popup-closed-by-user') {
-      throw new Error('A janela de login do Google foi fechada antes de concluir.');
-    } else if (error.code === 'auth/cancelled-popup-request') {
-      throw new Error('Tentativa de login cancelada. Tente novamente.');
+    if (error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request') {
+      console.info('Acesso Google cancelado ou janela fechada pelo usuário.');
+      return null;
     }
+    console.error('Erro no Google Sign-In:', error);
     throw error;
   } finally {
     isSigningIn = false;

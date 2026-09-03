@@ -23,10 +23,15 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({
     selectedMonth,
     cofrinhos,
     setMonthlyAporteStatus,
+    person1Name,
+    person2Name,
   } = useFinance();
 
+  const p1 = person1Name || 'Ricardo';
+  const p2 = person2Name || 'Ellen';
+
   // Contribution state
-  const [person, setPerson] = useState<Person>('Ricardo');
+  const [person, setPerson] = useState<Person>(p1);
   const [amount, setAmount] = useState('500');
   const [institution, setInstitution] = useState('Tesouro Selic 2029 / CDB 100% CDI');
   const [date, setDate] = useState('');
@@ -121,8 +126,8 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
               Titular do Aporte
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['Ricardo', 'Ellen', 'Família'] as Person[]).map((p) => {
+            <div className="grid grid-cols-2 gap-2">
+              {[p1, p2].map((p, idx) => {
                 const active = person === p;
                 return (
                   <button
@@ -130,15 +135,13 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({
                     key={p}
                     onClick={() => {
                       setPerson(p);
-                      if (p === 'Ricardo' || p === 'Ellen') setAmount('500');
+                      setAmount('500');
                     }}
                     className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all ${
                       active
-                        ? p === 'Ricardo'
+                        ? idx === 0
                           ? 'bg-blue-600 text-white border-blue-600'
-                          : p === 'Ellen'
-                          ? 'bg-rose-600 text-white border-rose-600'
-                          : 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-rose-600 text-white border-rose-600'
                         : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
                     }`}
                   >

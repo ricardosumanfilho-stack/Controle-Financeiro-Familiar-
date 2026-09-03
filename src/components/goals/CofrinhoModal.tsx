@@ -13,6 +13,11 @@ import {
   Settings2,
   Sparkles,
   Info,
+  RotateCcw,
+  Calculator,
+  Coins,
+  Wallet,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface CofrinhoModalProps {
@@ -46,12 +51,21 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
 }) => {
   const {
     cofrinhos,
+    cofrinhoMovements,
     addCofrinhoMovement,
     updateCofrinho,
     transferBetweenCofrinhos,
     globalCofrinhoSettings,
     selectedMonth,
+    addTransaction,
+    updateTransaction,
+    setMonthlyAporteStatus,
+    person1Name,
+    person2Name,
   } = useFinance();
+
+  const p1 = person1Name || 'Ricardo';
+  const p2 = person2Name || 'Ellen';
 
   const [activeTab, setActiveTab] = useState<'movement' | 'transfer' | 'edit'>(initialMode);
   const [cofrinhoId, setCofrinhoId] = useState<string>(defaultCofrinhoId);
@@ -59,7 +73,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
   // Movement Form State
   const [movType, setMovType] = useState<'aporte' | 'retirada' | 'rendimento'>('aporte');
   const [amount, setAmount] = useState('500');
-  const [person, setPerson] = useState<Person>('Família');
+  const [person, setPerson] = useState<Person>(p1);
   const [date, setDate] = useState('');
   const [subPurpose, setSubPurpose] = useState('');
   const [notes, setNotes] = useState('');
@@ -69,10 +83,10 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
   const [transferAmount, setTransferAmount] = useState('500');
   const [transferNotes, setTransferNotes] = useState('');
 
-  // Edit Cofrinho Form State
+  // Edit Cofrinho Form State (including Direct Balance Configuration)
   const [editName, setEditName] = useState('');
   const [editObjective, setEditObjective] = useState('');
-  const [editResponsible, setEditResponsible] = useState<Person>('Família');
+  const [editResponsible, setEditResponsible] = useState<Person>(p1);
   const [editInstitution, setEditInstitution] = useState('');
   const [editApplicationType, setEditApplicationType] = useState('');
   const [editYieldType, setEditYieldType] = useState<CofrinhoYieldType>('cdi_100');
@@ -82,6 +96,13 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
   const [editTargetDate, setEditTargetDate] = useState('');
   const [editStatus, setEditStatus] = useState<'ativo' | 'encerrado'>('ativo');
   const [editNotes, setEditNotes] = useState('');
+
+  // Balances
+  const [editCurrentBalance, setEditCurrentBalance] = useState('0');
+  const [editInitialBalance, setEditInitialBalance] = useState('0');
+  const [editMonthlyYield, setEditMonthlyYield] = useState('0');
+  const [editAccumulatedYield, setEditAccumulatedYield] = useState('0');
+  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -95,6 +116,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
       setNotes('');
       setTransferAmount('500');
       setTransferNotes('');
+      setFeedbackMsg(null);
 
       const targetOther = cofrinhos.find((c) => c.id !== defaultCofrinhoId);
       if (targetOther) setTransferTargetId(targetOther.id);
@@ -109,7 +131,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
   const populateEditForm = (cof: any) => {
     setEditName(cof.name || '');
     setEditObjective(cof.objective || cof.description || '');
-    setEditResponsible(cof.responsiblePerson || 'Família');
+    setEditResponsible(cof.person || cof.responsiblePerson || 'Família');
     setEditInstitution(cof.institution || '');
     setEditApplicationType(cof.applicationType || '');
     setEditYieldType(cof.yieldType || 'cdi_100');
@@ -119,12 +141,54 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
     setEditTargetDate(cof.targetDate || '');
     setEditStatus(cof.status || 'ativo');
     setEditNotes(cof.notes || '');
+
+    // Current & Initial Balances
+    setEditCurrentBalance(cof.currentBalance !== undefined ? String(cof.currentBalance) : '0');
+    setEditInitialBalance(cof.initialBalance !== undefined ? String(cof.initialBalance) : '0');
+    setEditMonthlyYield(cof.monthlyYield !== undefined ? String(cof.monthlyYield) : '0');
+    setEditAccumulatedYield(cof.accumulatedYield !== undefined ? String(cof.accumulatedYield) : '0');
   };
 
   const handleSelectCofrinho = (id: string) => {
     setCofrinhoId(id);
     const cof = cofrinhos.find((c) => c.id === id);
     if (cof) populateEditForm(cof);
+    setFeedbackMsg(null);
+  };
+
+  // Helper Quick Balance Actions
+  const handleSetBalanceZero = () => {
+    setEditCurrentBalance('0');
+    setFeedbackMsg('Saldo atual definido como R$ 0,00. Clique em "Salvar Alterações" para confirmar.');
+  };
+
+  const handleSetBalanceToInitial = () => {
+    setEditCurrentBalance(editInitialBalance || '0');
+    setFeedbackMsg(`Saldo atual igualado ao Saldo Inicial (${formatCurrency(parseFloat(editInitialBalance) || 0)}).`);
+  };
+
+  const handleCalculateBalanceFromMovements = () => {
+    const movs = cofrinhoMovements.filter((m) => m.cofrinhoId === cofrinhoId);
+    let calc = parseFloat(editInitialBalance.replace(',', '.')) || 0;
+    let monthlyY = 0;
+    let accY = 0;
+    movs.forEach((m) => {
+      if (m.type === 'aporte') {
+        calc += m.amount;
+      } else if (m.type === 'retirada') {
+        calc = Math.max(0, calc - m.amount);
+      } else if (m.type === 'rendimento') {
+        calc += m.amount;
+        accY += m.amount;
+        if (m.date.startsWith(selectedMonth)) {
+          monthlyY += m.amount;
+        }
+      }
+    });
+    setEditCurrentBalance(String(Math.round(calc * 100) / 100));
+    setEditMonthlyYield(String(Math.round(monthlyY * 100) / 100));
+    setEditAccumulatedYield(String(Math.round(accY * 100) / 100));
+    setFeedbackMsg(`Saldo calculado com base em ${movs.length} movimentação(ões): ${formatCurrency(calc)}.`);
   };
 
   const selectedCofrinho = cofrinhos.find((c) => c.id === cofrinhoId) || cofrinhos[0];
@@ -154,15 +218,66 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
       return;
     }
 
-    addCofrinhoMovement({
-      cofrinhoId,
-      type: movType,
-      amount: numAmount,
-      date: date || new Date().toISOString().slice(0, 10),
-      person,
-      subPurpose: subPurpose || undefined,
-      notes: notes.trim() || undefined,
-    });
+    const movDate = date || new Date().toISOString().slice(0, 10);
+    const cof = cofrinhos.find((c) => c.id === cofrinhoId);
+    const finalNotes = notes.trim();
+
+    if (movType === 'aporte' || movType === 'retirada') {
+      const isAporte = movType === 'aporte';
+      const defaultDesc = isAporte
+        ? `Aporte - ${cof?.name || 'Cofrinho'}`
+        : `Resgate - ${cof?.name || 'Cofrinho'}`;
+      const finalDesc = finalNotes || defaultDesc;
+
+      const createdTx = addTransaction({
+        description: finalDesc,
+        amount: numAmount,
+        type: isAporte ? 'investimento' : 'receita',
+        category: isAporte ? 'Investimentos' : 'Resgate Cofrinho',
+        subcategory: cof?.name,
+        person: person || (cof?.person !== 'Família' ? (cof?.person as any) : 'Família') || 'Ricardo',
+        date: movDate,
+        competenceMonth: movDate.slice(0, 7),
+        paid: true,
+        isRecurring: false,
+        paymentMethod: 'transferencia',
+        accountOrPot: cof?.name || 'Cofrinho',
+        cofrinhoId,
+        notes: finalNotes || undefined,
+      });
+
+      const createdMov = addCofrinhoMovement({
+        cofrinhoId,
+        type: movType,
+        amount: numAmount,
+        date: movDate,
+        person,
+        subPurpose: subPurpose || undefined,
+        transactionId: createdTx.id,
+        notes: finalNotes || undefined,
+      });
+
+      updateTransaction(createdTx.id, {
+        cofrinhoMovementId: createdMov.id,
+      });
+
+      if (cofrinhoId === 'cof-reserva' && isAporte) {
+        if (person === 'Ricardo' || person === 'Ellen') {
+          setMonthlyAporteStatus(person, 'realizado');
+        }
+      }
+    } else {
+      // Rendimento
+      addCofrinhoMovement({
+        cofrinhoId,
+        type: movType,
+        amount: numAmount,
+        date: movDate,
+        person,
+        subPurpose: subPurpose || undefined,
+        notes: finalNotes || undefined,
+      });
+    }
 
     onClose();
   };
@@ -198,6 +313,11 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
       return;
     }
 
+    const numCurrentBalance = parseFloat(editCurrentBalance.replace(',', '.'));
+    const numInitialBalance = parseFloat(editInitialBalance.replace(',', '.'));
+    const numMonthlyYield = parseFloat(editMonthlyYield.replace(',', '.'));
+    const numAccumulatedYield = parseFloat(editAccumulatedYield.replace(',', '.'));
+
     updateCofrinho(cofrinhoId, {
       name: editName.trim(),
       objective: editObjective.trim(),
@@ -209,6 +329,10 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
       customAnnualRate: Number(editCustomAnnualRate),
       targetAmount: editTargetAmount ? parseFloat(editTargetAmount.replace(',', '.')) : undefined,
       targetDate: editTargetDate || undefined,
+      currentBalance: !isNaN(numCurrentBalance) ? Math.max(0, numCurrentBalance) : (selectedCofrinho?.currentBalance || 0),
+      initialBalance: !isNaN(numInitialBalance) ? Math.max(0, numInitialBalance) : (selectedCofrinho?.initialBalance || 0),
+      monthlyYield: !isNaN(numMonthlyYield) ? Math.max(0, numMonthlyYield) : (selectedCofrinho?.monthlyYield || 0),
+      accumulatedYield: !isNaN(numAccumulatedYield) ? Math.max(0, numAccumulatedYield) : (selectedCofrinho?.accumulatedYield || 0),
       status: editStatus,
       notes: editNotes.trim() || undefined,
     });
@@ -221,7 +345,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title="Gestão de Cofrinhos & Reservas"
-      subtitle={selectedCofrinho ? `${selectedCofrinho.name} — Saldo: ${formatCurrency(selectedCofrinho.currentBalance)}` : 'Metas estruturadas'}
+      subtitle={selectedCofrinho ? `${selectedCofrinho.name} — Saldo Atual: ${formatCurrency(selectedCofrinho.currentBalance)}` : 'Metas estruturadas'}
     >
       {/* Sub Tabs */}
       <div className="flex border-b border-slate-200 dark:border-slate-800 mb-4">
@@ -261,7 +385,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
           }`}
         >
           <Settings2 className="w-3.5 h-3.5" />
-          <span>Configurar Parâmetros</span>
+          <span>Ajustar Saldo & Parâmetros</span>
         </button>
       </div>
 
@@ -332,8 +456,8 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
             <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
               Responsável
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['Família', 'Ricardo', 'Ellen'] as Person[]).map((p) => {
+            <div className="grid grid-cols-2 gap-2">
+              {[p1, p2].map((p, idx) => {
                 const active = person === p;
                 return (
                   <button
@@ -342,7 +466,9 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
                     onClick={() => setPerson(p)}
                     className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center transition-all ${
                       active
-                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        ? idx === 0
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-rose-600 text-white border-rose-600'
                         : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
                     }`}
                   >
@@ -542,9 +668,141 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
         </form>
       )}
 
-      {/* TAB 3: EDIT COFRINHO PARAMETERS */}
+      {/* TAB 3: EDIT COFRINHO PARAMETERS & DIRECT BALANCE CALIBRATION */}
       {activeTab === 'edit' && (
         <form onSubmit={handleSubmitEdit} className="space-y-4">
+          {/* Top Highlight: Direct Saldo Configuration & Calibration */}
+          <div className="p-4 bg-gradient-to-br from-indigo-50 via-emerald-50/40 to-white dark:from-slate-800/90 dark:via-slate-800/60 dark:to-slate-900 border-2 border-indigo-200 dark:border-indigo-900/60 rounded-2xl space-y-3.5 shadow-xs">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-600 text-white rounded-xl">
+                  <Coins className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                    Configuração do Saldo Atual
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Ajuste o valor real disponível para sincronizar com seu extrato ou recalibrar.
+                  </p>
+                </div>
+              </div>
+              <span className="text-[11px] font-bold px-2.5 py-1 bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 rounded-lg">
+                Patrimônio Real
+              </span>
+            </div>
+
+            {/* Saldo Atual Input */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-100 mb-1">
+                Saldo Atual em Conta / Aplicação (R$)
+              </label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-2.5 text-base font-bold text-indigo-600 dark:text-indigo-400">
+                  R$
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  required
+                  id="input-cofrinho-current-balance"
+                  value={editCurrentBalance}
+                  onChange={(e) => {
+                    setEditCurrentBalance(e.target.value);
+                    setFeedbackMsg(null);
+                  }}
+                  className="w-full pl-12 pr-3.5 py-2.5 text-lg bg-white dark:bg-slate-900 border-2 border-indigo-400 dark:border-indigo-600 rounded-xl focus:ring-2 focus:ring-indigo-500 font-black text-slate-900 dark:text-slate-100"
+                />
+              </div>
+            </div>
+
+            {/* Quick Actions for Balance */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <button
+                type="button"
+                onClick={handleSetBalanceZero}
+                className="px-2.5 py-1 text-[11px] font-semibold bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-950/70 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 rounded-lg transition-colors flex items-center gap-1"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Zerar Saldo (R$ 0,00)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSetBalanceToInitial}
+                className="px-2.5 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors flex items-center gap-1"
+              >
+                <Wallet className="w-3 h-3" />
+                <span>Igualar ao Saldo Inicial</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCalculateBalanceFromMovements}
+                className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 rounded-lg transition-colors flex items-center gap-1"
+              >
+                <Calculator className="w-3 h-3" />
+                <span>Calcular pelas Movimentações</span>
+              </button>
+            </div>
+
+            {/* Feedback Message */}
+            {feedbackMsg && (
+              <div className="p-2 bg-emerald-100/80 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{feedbackMsg}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Additional Balance Details: Saldo Inicial & Rendimentos */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-xs">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                Saldo Inicial Base (R$)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={editInitialBalance}
+                onChange={(e) => setEditInitialBalance(e.target.value)}
+                className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-semibold"
+              />
+              <span className="text-[10px] text-slate-400 mt-0.5 block">Saldo no início do plano</span>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                Rendimento do Mês (R$)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={editMonthlyYield}
+                onChange={(e) => setEditMonthlyYield(e.target.value)}
+                className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-semibold"
+              />
+              <span className="text-[10px] text-slate-400 mt-0.5 block">Rendimento líquido do mês</span>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                Rendimento Acumulado (R$)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={editAccumulatedYield}
+                onChange={(e) => setEditAccumulatedYield(e.target.value)}
+                className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-semibold"
+              />
+              <span className="text-[10px] text-slate-400 mt-0.5 block">Total histórico recebido</span>
+            </div>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
@@ -568,9 +826,8 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
                 onChange={(e) => setEditResponsible(e.target.value as Person)}
                 className="w-full px-3.5 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl font-medium"
               >
-                <option value="Família">Família (Ambos)</option>
-                <option value="Ricardo">Ricardo</option>
-                <option value="Ellen">Ellen</option>
+                <option value={p1}>{p1}</option>
+                <option value={p2}>{p2}</option>
               </select>
             </div>
           </div>

@@ -17,14 +17,22 @@ import {
   CheckCircle2,
   FileSpreadsheet,
   FileText,
+  Sun,
+  Moon,
+  Database,
 } from 'lucide-react';
 
 interface SettingsViewProps {
   onOpenGoogleSheets?: () => void;
+  onOpenSupabase?: () => void;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets, onOpenSupabase }) => {
   const {
+    theme,
+    setTheme,
+    isDarkMode,
+    toggleTheme,
     salarySettings,
     updateSalarySettings,
     emergencySettings,
@@ -49,6 +57,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets }
 
   const [savedSuccess, setSavedSuccess] = useState(false);
 
+  // Persons local state
+  const [person1, setPerson1] = useState(salarySettings.person1Name || 'Ricardo');
+  const [person2, setPerson2] = useState(salarySettings.person2Name || 'Ellen');
+
   // Salaries local state
   const [ricardoBase, setRicardoBase] = useState(salarySettings.ricardoNetSalary || salarySettings.salaryRicardo || 5300);
   const [ellenBase, setEllenBase] = useState(salarySettings.ellenNetSalary || salarySettings.salaryEllen || 1600);
@@ -69,12 +81,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets }
     e.preventDefault();
 
     updateSalarySettings({
+      person1Name: person1.trim() || 'Ricardo',
+      person2Name: person2.trim() || 'Ellen',
       salaryRicardo: ricardoBase,
       ricardoNetSalary: ricardoBase,
       ricardoAdvanceSalary: ricardoBase * 0.4,
       ricardoMainSalary: ricardoBase * 0.6,
       salaryEllen: ellenBase,
       ellenNetSalary: ellenBase,
+      ellenAdvanceSalary: ellenBase * 0.4,
+      ellenMainSalary: ellenBase * 0.6,
     });
 
     updateEmergencySettings({
@@ -142,6 +158,125 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets }
       </div>
 
       <form onSubmit={handleSaveAll} className="space-y-6">
+        {/* Bloco: Tema e Aparência */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              {isDarkMode ? <Moon className="w-5 h-5 text-indigo-400" /> : <Sun className="w-5 h-5 text-amber-500" />}
+              Tema & Modo de Visualização
+            </h3>
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">
+              {isDarkMode ? 'Modo Escuro Ativo' : 'Modo Claro Ativo'}
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-600 dark:text-slate-400">
+            Alterne entre o tema Claro e o tema Escuro conforme a sua preferência de iluminação e conforto visual.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+            <button
+              type="button"
+              id="theme-select-light"
+              onClick={() => setTheme('light')}
+              className={`p-4 rounded-xl border text-left flex items-start gap-3.5 transition-all cursor-pointer ${
+                !isDarkMode
+                  ? 'border-blue-600 bg-blue-50/70 text-slate-900 ring-2 ring-blue-500/20 shadow-xs'
+                  : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700'
+              }`}
+            >
+              <div className={`p-2.5 rounded-xl shrink-0 ${!isDarkMode ? 'bg-amber-100 text-amber-600' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                <Sun className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-sm">Modo Claro (Light Mode)</h4>
+                  {!isDarkMode && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white">
+                      Selecionado
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                  Fundo claro com alto contraste, ideal para ambientes bem iluminados ou uso diurno.
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              id="theme-select-dark"
+              onClick={() => setTheme('dark')}
+              className={`p-4 rounded-xl border text-left flex items-start gap-3.5 transition-all cursor-pointer ${
+                isDarkMode
+                  ? 'border-blue-500 bg-blue-950/40 text-white ring-2 ring-blue-500/20 shadow-xs'
+                  : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700'
+              }`}
+            >
+              <div className={`p-2.5 rounded-xl shrink-0 ${isDarkMode ? 'bg-indigo-950/80 text-indigo-400' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                <Moon className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-sm">Modo Escuro (Dark Mode)</h4>
+                  {isDarkMode && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white">
+                      Selecionado
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                  Tons de ardósia escuros com descanso visual, ideal para uso noturno prolongado.
+                </p>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* Bloco 0: Responsáveis Familiares (Nomes Editáveis) */}
+        <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Settings className="w-5 h-5 text-indigo-600" />
+              Responsáveis Familiares (Configuração de Nomes)
+            </h3>
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">
+              Personalizável
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Defina o nome dos responsáveis financeiros da família. Esses nomes serão usados em todos os lançamentos, cartões, relatórios e filtros.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                Nome do Responsável 1
+              </label>
+              <input
+                type="text"
+                value={person1}
+                onChange={(e) => setPerson1(e.target.value)}
+                placeholder="Ex: Ricardo"
+                className="w-full px-3.5 py-2 text-sm bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-semibold"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                Nome do Responsável 2
+              </label>
+              <input
+                type="text"
+                value={person2}
+                onChange={(e) => setPerson2(e.target.value)}
+                placeholder="Ex: Ellen"
+                className="w-full px-3.5 py-2 text-sm bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-semibold"
+              />
+            </div>
+          </div>
+        </div>
+
         {/* Bloco 1: Salários e Proventos */}
         <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
           <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
@@ -152,7 +287,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets }
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                Salário Base Líquido - Ricardo (R$)
+                Salário Base Líquido - {person1} (R$)
               </label>
               <input
                 type="number"
@@ -168,7 +303,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets }
 
             <div>
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                Salário Base Líquido - Ellen (R$)
+                Salário Base Líquido - {person2} (R$)
               </label>
               <input
                 type="number"
@@ -338,6 +473,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets }
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {onOpenSupabase && (
+            <button
+              type="button"
+              onClick={onOpenSupabase}
+              className="flex flex-col items-start p-4 rounded-xl border border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-950/20 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors text-left sm:col-span-2 lg:col-span-4"
+            >
+              <div className="flex items-center justify-between w-full mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                      Integração Supabase & Migrations
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                        PostgreSQL
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      Sincronize com o banco de dados na nuvem, visualize e copie o script de migrations com 16 tabelas e RLS.
+                    </span>
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-800 px-3 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 shadow-xs">
+                  Gerenciar Supabase
+                </span>
+              </div>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={exportExcelFull}

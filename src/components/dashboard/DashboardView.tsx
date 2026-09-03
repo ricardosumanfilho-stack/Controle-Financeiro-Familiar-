@@ -20,8 +20,12 @@ import {
   Hammer,
   PiggyBank,
   Zap,
+  Palmtree,
+  Wallet,
+  Compass,
 } from 'lucide-react';
 import { Person } from '../../types';
+import { CofrinhoModal } from '../goals/CofrinhoModal';
 
 interface DashboardViewProps {
   onOpenNewTransaction: () => void;
@@ -47,11 +51,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     totalEmergencyFund,
     emergencySettings,
     cofrinhos,
+    cofrinhoMovements,
     renovationCredit,
     setActiveTab,
+    person1Name,
+    person2Name,
   } = useFinance();
 
-  const [personFilter, setPersonFilter] = useState<'Todos' | Person>('Todos');
+  const p1 = person1Name || 'Ricardo';
+  const p2 = person2Name || 'Ellen';
+
+  const [personFilter, setPersonFilter] = useState<'Todos' | string>('Todos');
+  const [isCofrinhoModalOpen, setIsCofrinhoModalOpen] = useState(false);
+  const [cofrinhoModalMode, setCofrinhoModalMode] = useState<'movement' | 'transfer' | 'edit'>('movement');
+  const [selectedCofrinhoId, setSelectedCofrinhoId] = useState<string>('cof-lazer');
 
   const cardInvoices = getCardInvoicesForMonth(selectedMonth);
 
@@ -61,6 +74,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     .filter((t) => (personFilter === 'Todos' ? true : t.person === personFilter));
 
   const recentTransactions = monthTransactions.slice(0, 6);
+
+  // Lazer Cofrinho calculations
+  const lazerCofrinho = cofrinhos.find((c) => c.id === 'cof-lazer' || c.type === 'lazer');
+  const lazerBalance = lazerCofrinho?.currentBalance || 0;
+  const lazerTarget = lazerCofrinho?.targetAmount || 6000;
+  const lazerPercentage = lazerTarget > 0 ? Math.min(100, (lazerBalance / lazerTarget) * 100) : 0;
+
+  // Lazer expense in the selected month
+  const lazerMonthExpense = monthTransactions
+    .filter(
+      (t) =>
+        t.type === 'despesa' &&
+        (t.category === 'Lazer' ||
+          t.category.toLowerCase().includes('lazer') ||
+          t.category.toLowerCase().includes('viagem') ||
+          t.category.toLowerCase().includes('passeio') ||
+          t.category.toLowerCase().includes('restaurante'))
+    )
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  // Recent movements of Lazer Cofrinho
+  const lazerMovements = (cofrinhoMovements || [])
+    .filter((m) => m.cofrinhoId === 'cof-lazer' || m.cofrinhoId === lazerCofrinho?.id)
+    .slice(0, 3);
+
+  const handleOpenLazerModal = (mode: 'movement' | 'transfer' | 'edit' = 'movement') => {
+    setSelectedCofrinhoId(lazerCofrinho?.id || 'cof-lazer');
+    setCofrinhoModalMode(mode);
+    setIsCofrinhoModalOpen(true);
+  };
 
   // Emergency Fund calculations
   const emergencyCoverageMonths =
@@ -107,7 +150,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Filtrar Visão:
           </span>
           <div className="flex flex-wrap gap-1">
-            {(['Todos', 'Ricardo', 'Ellen', 'Família'] as ('Todos' | Person)[]).map((p) => {
+            {['Todos', p1, p2].map((p) => {
               const active = personFilter === p;
               return (
                 <button
@@ -296,14 +339,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
           {cofrinhos.map((pot) => (
             <div
               key={pot.id}
               className="p-3 bg-slate-800/60 border border-slate-700/60 rounded-xl space-y-1"
             >
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-slate-300 truncate max-w-[120px]">
+                <span className="text-[11px] font-semibold text-slate-300 truncate max-w-[140px]">
                   {pot.name}
                 </span>
                 <span className="w-2 h-2 rounded-full" style={{ backgroundColor: pot.color }} />
@@ -699,6 +742,204 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span>Registrar Aporte na Reserva</span>
           </button>
         </div>
+
+        {/* 5. JANELA DE SALDO PARA LAZER & VIAGENS (10% Rendas Extras + Rendimentos CDI) */}
+        <div
+          id="dash-lazer-window"
+          className="md:col-span-2 bg-gradient-to-br from-white via-purple-50/20 to-purple-100/30 dark:from-slate-900 dark:via-slate-900 dark:to-purple-950/20 p-5 sm:p-6 rounded-2xl border border-purple-200/80 dark:border-purple-900/50 space-y-5 shadow-xs relative overflow-hidden"
+        >
+          {/* Subtle decorative glow */}
+          <div className="absolute top-0 right-0 w-48 h-48 bg-purple-500/10 dark:bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
+
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 rounded-2xl border border-purple-200/60 dark:border-purple-800/60 shadow-2xs">
+                <Palmtree className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                    Saldo para Lazer & Viagens
+                  </h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60">
+                    10% Renda Extra
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
+                    Livre de Culpa
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Recurso familiar dedicado para passeios, viagens, restaurantes e entretenimento
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                id="dash-lazer-view-cofrinho"
+                onClick={() => setActiveTab('goals')}
+                className="text-xs text-purple-600 dark:text-purple-400 font-bold hover:underline flex items-center gap-1 bg-purple-50/80 dark:bg-purple-950/40 px-3 py-1.5 rounded-xl border border-purple-200/50 dark:border-purple-900/40"
+              >
+                <span>Acessar Metas & Cofrinhos</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Metric Panels */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 relative z-10">
+            {/* Saldo Atual */}
+            <div className="p-4 bg-white dark:bg-slate-800/80 border border-purple-200/70 dark:border-purple-900/40 rounded-2xl space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-purple-700 dark:text-purple-300">
+                  Saldo Disponível
+                </span>
+                <span className="w-2.5 h-2.5 rounded-full bg-purple-500 animate-pulse" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-slate-100">
+                {formatCurrency(lazerBalance)}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                <span>{lazerCofrinho?.institution || 'C6 Bank'}</span>
+                <span className="font-semibold text-purple-600 dark:text-purple-400">
+                  {lazerCofrinho?.applicationType || 'CDB 102% CDI'}
+                </span>
+              </div>
+            </div>
+
+            {/* Rendimentos CDI */}
+            <div className="p-4 bg-white dark:bg-slate-800/80 border border-purple-200/70 dark:border-purple-900/40 rounded-2xl space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Rendimento CDI
+                </span>
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-emerald-600 dark:text-emerald-400">
+                +{formatCurrency(lazerCofrinho?.monthlyYield || 0)}
+                <span className="text-xs font-normal text-slate-400">/mês</span>
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                <span>Acumulado:</span>
+                <span className="font-semibold text-slate-700 dark:text-slate-300">
+                  +{formatCurrency(lazerCofrinho?.accumulatedYield || 0)}
+                </span>
+              </div>
+            </div>
+
+            {/* Gastos de Lazer no Mês */}
+            <div className="p-4 bg-white dark:bg-slate-800/80 border border-purple-200/70 dark:border-purple-900/40 rounded-2xl space-y-2 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Utilizado no Mês
+                </span>
+                <Compass className="w-3.5 h-3.5 text-purple-500" />
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-slate-100">
+                {formatCurrency(lazerMonthExpense)}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                <span>Despesas de Lazer:</span>
+                <span className="font-semibold text-slate-700 dark:text-slate-300">
+                  {
+                    monthTransactions.filter(
+                      (t) =>
+                        t.type === 'despesa' &&
+                        (t.category === 'Lazer' ||
+                          t.category.toLowerCase().includes('lazer') ||
+                          t.category.toLowerCase().includes('viagem') ||
+                          t.category.toLowerCase().includes('restaurante'))
+                    ).length
+                  }{' '}
+                  lançamentos
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Bar for Leisure / Vacation Goal */}
+          <div className="p-4 bg-purple-50/70 dark:bg-purple-950/30 border border-purple-200/60 dark:border-purple-900/40 rounded-2xl space-y-2 relative z-10">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                Meta de Lazer & Férias da Família
+              </span>
+              <span className="font-semibold text-slate-700 dark:text-slate-300">
+                {formatCurrency(lazerBalance)} de {formatCurrency(lazerTarget)}
+              </span>
+            </div>
+
+            <div className="w-full bg-slate-200 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full transition-all"
+                style={{ width: `${lazerPercentage}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-0.5">
+              <span>{lazerPercentage.toFixed(1)}% do objetivo acumulado</span>
+              <span className="text-purple-700 dark:text-purple-300 font-medium">
+                Regra 70/20/10: 10% automático de toda renda extra
+              </span>
+            </div>
+          </div>
+
+          {/* Recent movements list (if any) + Action Buttons */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1 relative z-10">
+            {lazerMovements.length > 0 ? (
+              <div className="flex-1 flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                  Últimos movimentos:
+                </span>
+                {lazerMovements.slice(0, 2).map((mov) => {
+                  const isPositive = mov.type === 'aporte' || mov.type === 'rendimento';
+                  return (
+                    <span
+                      key={mov.id}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 text-[11px] text-slate-700 dark:text-slate-300"
+                    >
+                      <span
+                        className={`font-bold ${
+                          isPositive
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-purple-600 dark:text-purple-400'
+                        }`}
+                      >
+                        {isPositive ? '+' : '-'}
+                        {formatCurrency(mov.amount)}
+                      </span>
+                      <span className="text-slate-400 text-[10px]">({formatDateBR(mov.date)})</span>
+                    </span>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Nenhum resgate recente no cofrinho de lazer.
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 self-end sm:self-auto w-full sm:w-auto">
+              <button
+                id="dash-lazer-btn-movement"
+                onClick={() => handleOpenLazerModal('movement')}
+                className="flex-1 sm:flex-none px-4 py-2 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Aportar / Resgatar</span>
+              </button>
+              <button
+                id="dash-lazer-btn-expense"
+                onClick={onOpenNewTransaction}
+                className="flex-1 sm:flex-none px-4 py-2 text-xs font-bold bg-white dark:bg-slate-800 hover:bg-purple-50 dark:hover:bg-slate-700 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 rounded-xl shadow-2xs transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Palmtree className="w-3.5 h-3.5" />
+                <span>+ Gasto de Lazer</span>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Two Column Layout: Despesas por Categoria & Últimos Lançamentos */}
@@ -831,6 +1072,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Modal para Operações Diretas de Cofrinho (Lazer / Reserva / Casa) */}
+      <CofrinhoModal
+        isOpen={isCofrinhoModalOpen}
+        onClose={() => setIsCofrinhoModalOpen(false)}
+        defaultCofrinhoId={selectedCofrinhoId}
+        initialMode={cofrinhoModalMode}
+      />
     </div>
   );
 };

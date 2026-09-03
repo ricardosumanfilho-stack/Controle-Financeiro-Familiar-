@@ -10,10 +10,13 @@ interface CardModalProps {
 }
 
 export const CardModal: React.FC<CardModalProps> = ({ isOpen, onClose, editingCard }) => {
-  const { addCard, updateCard } = useFinance();
+  const { addCard, updateCard, person1Name, person2Name } = useFinance();
+
+  const p1 = person1Name || 'Ricardo';
+  const p2 = person2Name || 'Ellen';
 
   const [name, setName] = useState('');
-  const [person, setPerson] = useState<Person>('Ricardo');
+  const [person, setPerson] = useState<Person>(p1);
   const [closingDay, setClosingDay] = useState(20);
   const [dueDay, setDueDay] = useState(27);
   const [monthlyLimitGoal, setMonthlyLimitGoal] = useState(500);
@@ -23,7 +26,7 @@ export const CardModal: React.FC<CardModalProps> = ({ isOpen, onClose, editingCa
   useEffect(() => {
     if (editingCard) {
       setName(editingCard.name);
-      setPerson(editingCard.person);
+      setPerson(editingCard.person === 'Família' ? p1 : editingCard.person);
       setClosingDay(editingCard.closingDay);
       setDueDay(editingCard.dueDay);
       setMonthlyLimitGoal(editingCard.monthlyLimitGoal || 500);
@@ -31,14 +34,14 @@ export const CardModal: React.FC<CardModalProps> = ({ isOpen, onClose, editingCa
       setBrand(editingCard.brand || 'Mastercard');
     } else {
       setName('');
-      setPerson('Ricardo');
+      setPerson(p1);
       setClosingDay(20);
       setDueDay(27);
       setMonthlyLimitGoal(500);
       setColor('#820AD1');
       setBrand('Mastercard');
     }
-  }, [editingCard, isOpen]);
+  }, [editingCard, isOpen, p1]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,8 +95,8 @@ export const CardModal: React.FC<CardModalProps> = ({ isOpen, onClose, editingCa
           <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
             Responsável / Titular
           </label>
-          <div className="grid grid-cols-3 gap-2">
-            {(['Ricardo', 'Ellen', 'Família'] as Person[]).map((p) => {
+          <div className="grid grid-cols-2 gap-2">
+            {[p1, p2].map((p, idx) => {
               const active = person === p;
               return (
                 <button
@@ -102,11 +105,9 @@ export const CardModal: React.FC<CardModalProps> = ({ isOpen, onClose, editingCa
                   onClick={() => setPerson(p)}
                   className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all ${
                     active
-                      ? p === 'Ricardo'
+                      ? idx === 0
                         ? 'bg-blue-600 text-white border-blue-600'
-                        : p === 'Ellen'
-                        ? 'bg-rose-600 text-white border-rose-600'
-                        : 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-rose-600 text-white border-rose-600'
                       : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
                   }`}
                 >

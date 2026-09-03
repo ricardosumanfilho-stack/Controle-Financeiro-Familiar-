@@ -1,4 +1,5 @@
 import {
+  CardSubscription,
   Cofrinho,
   CofrinhoMovement,
   CreditCard,
@@ -19,6 +20,7 @@ import {
   FutureRentSettings,
   MonthlyClosingChecklist,
 } from '../types';
+import { createCarrefourMasterShoppingList } from './carrefourMasterList';
 
 export const INITIAL_CARDS: CreditCard[] = [
   {
@@ -60,8 +62,8 @@ export const INITIAL_GLOBAL_COFRINHO_SETTINGS: GlobalCofrinhoSettings = {
   cdiAnnualRate: 10.5, // 10.5% ao ano (editável nas configurações)
   defaultIncomeTaxRate: 15.0, // 15% IR padrão para renda fixa longo prazo
   extraordinaryReservaPercentage: 70, // 70% para reserva de emergência
-  extraordinaryCasaManutencaoPercentage: 20, // 20% para Casa e Manutenção
-  extraordinaryLazerPercentage: 10, // 10% para Lazer
+  extraordinaryCasaManutencaoPercentage: 20, // 20% para Fundo Compra da Casa Nova
+  extraordinaryLazerPercentage: 10, // 10% para Lazer e Viagens
   redirectAfterEmergencyMet: true, // Redirecionar 70% após R$ 55.200
   redirectTargetCofrinhoId: 'cof-casa', // Redirecionar para Compra da nova casa
 };
@@ -69,7 +71,7 @@ export const INITIAL_GLOBAL_COFRINHO_SETTINGS: GlobalCofrinhoSettings = {
 export const INITIAL_COFRINHOS: Cofrinho[] = [
   {
     id: 'cof-reserva',
-    name: 'Reserva de Emergência',
+    name: 'Reserva de Emergência (Ricardo & Ellen)',
     type: 'reserva',
     objective: 'Garantir 8 meses de tranquilidade e segurança financeira da família',
     description: 'Equivalente a 8 meses da renda familiar (R$ 6.900 × 8 = R$ 55.200)',
@@ -97,7 +99,7 @@ export const INITIAL_COFRINHOS: Cofrinho[] = [
   },
   {
     id: 'cof-casa',
-    name: 'Compra da Nova Casa',
+    name: 'Fundo Compra da Casa Nova',
     type: 'casa',
     objective: 'Formação de patrimônio para entrada e aquisição do imóvel próprio da família',
     description: 'Fundo de aquisição da casa própria e destinação patrimonial',
@@ -120,42 +122,15 @@ export const INITIAL_COFRINHOS: Cofrinho[] = [
     color: '#3B82F6',
     iconName: 'Home',
     subCategoryPurpose: 'compra_casa',
-    notes: 'Recebe transferências internas de Casa & Manutenção e redirecionamento da reserva',
-    isDemo: true,
-  },
-  {
-    id: 'cof-manutencao',
-    name: 'Casa e Manutenção',
-    type: 'manutencao',
-    objective: 'Preservação da residência, reparos preventivos e manutenção do carro',
-    description: 'Recebe 20% automático de toda renda extraordinária para zelo patrimonial',
-    person: 'Família',
-    institution: 'Nubank (Caixinhas)',
-    applicationType: 'RDB Resgate Imediato 100% CDI',
-    yieldType: 'cdi_100',
-    cdiPercentage: 100,
-    customAnnualRate: 10.5,
-    initialBalance: 2400,
-    currentBalance: 3200,
-    monthlyYield: 31.50,
-    accumulatedYield: 180.00,
-    grossYield: 37.05,
-    taxAndFees: 5.55,
-    startDate: '2026-03-01',
-    targetAmount: 8000,
-    status: 'ativo',
-    color: '#F59E0B',
-    iconName: 'Wrench',
-    subCategoryPurpose: 'manutencao_casa',
-    notes: 'Classificado em Manutenção Casa, Carro, Reforma ou transferência para Nova Casa',
+    notes: 'Recebe 20% das rendas extraordinárias e redirecionamento da reserva quando atingir a meta',
     isDemo: true,
   },
   {
     id: 'cof-lazer',
-    name: 'Cofrinho Lazer',
+    name: 'Lazer e Viagens',
     type: 'lazer',
-    objective: 'Passeios, restaurantes, viagens de férias e compras prazerosas em família',
-    description: 'Recebe 10% automático de toda renda extraordinária (separado da reserva)',
+    objective: 'Passeios, restaurantes, viagens de férias e momentos de lazer em família',
+    description: 'Recebe 10% automático de toda renda extraordinária para viagens e momentos de lazer',
     person: 'Família',
     institution: 'C6 Bank',
     applicationType: 'CDB 102% CDI Diário',
@@ -174,86 +149,7 @@ export const INITIAL_COFRINHOS: Cofrinho[] = [
     color: '#A855F7',
     iconName: 'Palmtree',
     subCategoryPurpose: 'passeios',
-    notes: 'Uso livre para lazer sem tocar na reserva de emergência familiar',
-    isDemo: true,
-  },
-  {
-    id: 'cof-aluguel',
-    name: 'Futuro Aluguel',
-    type: 'aluguel_futuro',
-    objective: 'Reserva estruturada para início planejado de aluguel a partir de Jan/2027',
-    description: 'Aluguel planejado apenas para início em Jan/2027 com compensação de reformas',
-    person: 'Família',
-    institution: 'Sofisa Direto',
-    applicationType: 'CDB 110% CDI Liquidez Diária',
-    yieldType: 'cdi_custom',
-    cdiPercentage: 110,
-    customAnnualRate: 11.55,
-    initialBalance: 6500,
-    currentBalance: 8200,
-    monthlyYield: 82.00,
-    accumulatedYield: 310.00,
-    grossYield: 96.47,
-    taxAndFees: 14.47,
-    startDate: '2026-04-01',
-    targetAmount: 25000,
-    targetDate: '2027-01',
-    status: 'ativo',
-    color: '#64748B',
-    iconName: 'Calendar',
-    subCategoryPurpose: 'geral',
-    notes: 'Início programado para Janeiro de 2027',
-    isDemo: true,
-  },
-  {
-    id: 'cof-outros',
-    name: 'Outros Objetivos & Projetos',
-    type: 'outro',
-    objective: 'Projetos especiais, capacitação e aquisição planejada de equipamentos',
-    description: 'Cofrinho flexível para metas personalizadas da família',
-    person: 'Família',
-    institution: 'XP Investimentos',
-    applicationType: 'Fundo Simples DI / Tesouro Selic',
-    yieldType: 'cdi_100',
-    cdiPercentage: 100,
-    customAnnualRate: 10.5,
-    initialBalance: 1200,
-    currentBalance: 1800,
-    monthlyYield: 18.20,
-    accumulatedYield: 75.00,
-    grossYield: 21.41,
-    taxAndFees: 3.21,
-    startDate: '2026-05-01',
-    targetAmount: 5000,
-    status: 'ativo',
-    color: '#06B6D4',
-    iconName: 'Sparkles',
-    subCategoryPurpose: 'outro_patrimonial',
-    notes: 'Reserva para cursos, eletrônicos ou projetos paralelos',
-    isDemo: true,
-  },
-  {
-    id: 'cof-reforma',
-    name: 'Crédito de Reforma da Casa',
-    type: 'reforma',
-    objective: 'Crédito acumulado de reformas para abatimento no futuro aluguel',
-    description: 'Registro de benfeitorias executadas na residência',
-    person: 'Família',
-    institution: 'Controle Patrimonial Familiar',
-    applicationType: 'Crédito de Benfeitoria',
-    yieldType: 'none',
-    customAnnualRate: 0,
-    initialBalance: 3000,
-    currentBalance: 5400,
-    monthlyYield: 0,
-    accumulatedYield: 0,
-    startDate: '2026-01-15',
-    targetAmount: 15000,
-    status: 'ativo',
-    color: '#F97316',
-    iconName: 'Hammer',
-    subCategoryPurpose: 'reforma',
-    notes: 'Crédito acumulado para compensação no aluguel futuro a partir de Jan/2027',
+    notes: 'Uso livre para viagens e lazer da família sem impactar a reserva de emergência',
     isDemo: true,
   },
 ];
@@ -309,16 +205,6 @@ export const INITIAL_COFRINHO_MOVEMENTS: CofrinhoMovement[] = [
     notes: 'Rendimento Tesouro IPCA+',
     isDemo: true,
   },
-  {
-    id: 'cm-6',
-    cofrinhoId: 'cof-reforma',
-    date: '2026-07-20',
-    type: 'aporte',
-    amount: 2400,
-    person: 'Família',
-    notes: 'Troca de fiação e piso (crédito para abatimento de aluguel futuro)',
-    isDemo: true,
-  }
 ];
 
 export const INITIAL_GROCERY_PLAN: GroceryMonthPlan = {
@@ -326,6 +212,7 @@ export const INITIAL_GROCERY_PLAN: GroceryMonthPlan = {
   mode: 'opcao_a',
   totalWeeks: 5, // Agosto 2026 possui 5 semanas
   ricardoWeeklyPlanned: 150,
+  carryOverEnabled: true,
   ricardoWeeks: [
     { weekIndex: 1, weekLabel: 'Semana 1 (01 a 07/Ago)', plannedAmount: 150, actualAmount: 150, completed: true },
     { weekIndex: 2, weekLabel: 'Semana 2 (08 a 14/Ago)', plannedAmount: 150, actualAmount: 150, completed: true },
@@ -333,9 +220,19 @@ export const INITIAL_GROCERY_PLAN: GroceryMonthPlan = {
     { weekIndex: 4, weekLabel: 'Semana 4 (22 a 28/Ago)', plannedAmount: 150, actualAmount: 0, completed: false },
     { weekIndex: 5, weekLabel: 'Semana 5 (29 a 31/Ago)', plannedAmount: 150, actualAmount: 0, completed: false },
   ],
+  ellenPlanningType: 'semanal',
   ellenMonthlyPlanned: 400,
+  ellenWeeklyPlanned: 80,
   ellenActualAmount: 400,
   ellenCompleted: true,
+  ellenCarryOverEnabled: true,
+  ellenWeeks: [
+    { weekIndex: 1, weekLabel: 'Semana 1 (01 a 07/Ago)', plannedAmount: 80, actualAmount: 80, completed: true },
+    { weekIndex: 2, weekLabel: 'Semana 2 (08 a 14/Ago)', plannedAmount: 80, actualAmount: 80, completed: true },
+    { weekIndex: 3, weekLabel: 'Semana 3 (15 a 21/Ago)', plannedAmount: 80, actualAmount: 80, completed: true },
+    { weekIndex: 4, weekLabel: 'Semana 4 (22 a 28/Ago)', plannedAmount: 80, actualAmount: 80, completed: true },
+    { weekIndex: 5, weekLabel: 'Semana 5 (29 a 31/Ago)', plannedAmount: 80, actualAmount: 80, completed: true },
+  ],
 };
 
 export const INITIAL_INSTALLMENTS: InstallmentPurchase[] = [
@@ -391,6 +288,54 @@ export const INITIAL_INSTALLMENTS: InstallmentPurchase[] = [
     category: 'Itens para a casa',
     notes: 'Compra extraordinária para a casa',
     status: 'ativa',
+    isDemo: true,
+  },
+];
+
+export const INITIAL_CARD_SUBSCRIPTIONS: CardSubscription[] = [
+  {
+    id: 'sub-seguro-auto',
+    name: 'Seguro do Carro (Porto Seguro)',
+    description: 'Seguro do Carro (Porto Seguro)',
+    amount: 185.00,
+    person: 'Ricardo',
+    cardId: 'card-ricardo',
+    category: 'Transporte / Carro',
+    billingDay: 20,
+    startMonth: '2026-01',
+    status: 'active',
+    isActive: true,
+    notes: 'Débito recorrente mensal do seguro auto na fatura',
+    isDemo: true,
+  },
+  {
+    id: 'sub-youtube-music',
+    name: 'YouTube Music Família',
+    description: 'YouTube Music Família',
+    amount: 34.90,
+    person: 'Ricardo',
+    cardId: 'card-ricardo',
+    category: 'Lazer e Assinaturas',
+    billingDay: 15,
+    startMonth: '2026-01',
+    status: 'active',
+    isActive: true,
+    notes: 'Assinatura mensal streaming de áudio',
+    isDemo: true,
+  },
+  {
+    id: 'sub-streaming-ellen',
+    name: 'Streaming & Leitura Digital (Kindle / App)',
+    description: 'Streaming & Leitura Digital (Kindle / App)',
+    amount: 29.90,
+    person: 'Ellen',
+    cardId: 'card-ellen',
+    category: 'Educação & Lazer',
+    billingDay: 10,
+    startMonth: '2026-01',
+    status: 'active',
+    isActive: true,
+    notes: 'Assinatura recorrente mensal no cartão de Ellen',
     isDemo: true,
   },
 ];
@@ -1075,15 +1020,20 @@ export const INITIAL_EMERGENCY_SETTINGS: EmergencyFundSettings = {
 };
 
 export const INITIAL_SALARY_SETTINGS: SalarySettings = {
+  person1Name: 'Ricardo',
+  person2Name: 'Ellen',
   salaryRicardo: 5300,
   salaryEllen: 1600,
   ricardoNetSalary: 5300,
   ricardoAdvanceSalary: 2120,
   ricardoMainSalary: 3180,
   ellenNetSalary: 1600,
+  ellenAdvanceSalary: 640,
+  ellenMainSalary: 960,
 };
 
 export const INITIAL_SHOPPING_LISTS: ShoppingList[] = [
+  createCarrefourMasterShoppingList('LISTA DE COMPRAS - CARREFOUR', 'Carrefour', '2026-08'),
   {
     id: 'list-1',
     name: 'Feira e Hortifruti Semanal',
