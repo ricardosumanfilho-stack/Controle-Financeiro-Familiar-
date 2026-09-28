@@ -18,6 +18,8 @@ import {
   Coins,
   Wallet,
   CheckCircle2,
+  ArrowDownLeft,
+  Banknote,
 } from 'lucide-react';
 
 interface CofrinhoModalProps {
@@ -25,6 +27,7 @@ interface CofrinhoModalProps {
   onClose: () => void;
   defaultCofrinhoId?: string;
   initialMode?: 'movement' | 'transfer' | 'edit';
+  initialMovType?: 'aporte' | 'retirada' | 'rendimento';
 }
 
 const CASA_SUB_PURPOSES = [
@@ -48,6 +51,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
   onClose,
   defaultCofrinhoId = 'cof-reserva',
   initialMode = 'movement',
+  initialMovType = 'aporte',
 }) => {
   const {
     cofrinhos,
@@ -71,7 +75,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
   const [cofrinhoId, setCofrinhoId] = useState<string>(defaultCofrinhoId);
 
   // Movement Form State
-  const [movType, setMovType] = useState<'aporte' | 'retirada' | 'rendimento'>('aporte');
+  const [movType, setMovType] = useState<'aporte' | 'retirada' | 'rendimento'>(initialMovType);
   const [amount, setAmount] = useState('500');
   const [person, setPerson] = useState<Person>(p1);
   const [date, setDate] = useState('');
@@ -97,18 +101,15 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
   const [editStatus, setEditStatus] = useState<'ativo' | 'encerrado'>('ativo');
   const [editNotes, setEditNotes] = useState('');
 
-  // Balances
+  // Balances (Current Balance is managed here; Initial Balance & Yields are calculated automatically)
   const [editCurrentBalance, setEditCurrentBalance] = useState('0');
-  const [editInitialBalance, setEditInitialBalance] = useState('0');
-  const [editMonthlyYield, setEditMonthlyYield] = useState('0');
-  const [editAccumulatedYield, setEditAccumulatedYield] = useState('0');
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setActiveTab(initialMode);
       setCofrinhoId(defaultCofrinhoId || 'cof-reserva');
-      setMovType('aporte');
+      setMovType(initialMovType || 'aporte');
       setAmount('500');
       setPerson('Família');
       const today = new Date().toISOString().slice(0, 10);
@@ -124,9 +125,12 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
       const targetCof = cofrinhos.find((c) => c.id === defaultCofrinhoId);
       if (targetCof) {
         populateEditForm(targetCof);
+        if (targetCof.person === 'Ellen' || targetCof.person === 'Ricardo') {
+          setPerson(targetCof.person as Person);
+        }
       }
     }
-  }, [isOpen, defaultCofrinhoId, initialMode, selectedMonth]);
+  }, [isOpen, defaultCofrinhoId, initialMode, initialMovType, selectedMonth]);
 
   const populateEditForm = (cof: any) => {
     setEditName(cof.name || '');
@@ -142,17 +146,19 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
     setEditStatus(cof.status || 'ativo');
     setEditNotes(cof.notes || '');
 
-    // Current & Initial Balances
+    // Saldo Atual (Saldo Inicial e Rendimentos são calculados dinamicamente)
     setEditCurrentBalance(cof.currentBalance !== undefined ? String(cof.currentBalance) : '0');
-    setEditInitialBalance(cof.initialBalance !== undefined ? String(cof.initialBalance) : '0');
-    setEditMonthlyYield(cof.monthlyYield !== undefined ? String(cof.monthlyYield) : '0');
-    setEditAccumulatedYield(cof.accumulatedYield !== undefined ? String(cof.accumulatedYield) : '0');
   };
 
   const handleSelectCofrinho = (id: string) => {
     setCofrinhoId(id);
     const cof = cofrinhos.find((c) => c.id === id);
-    if (cof) populateEditForm(cof);
+    if (cof) {
+      populateEditForm(cof);
+      if (cof.person === 'Ellen' || cof.person === 'Ricardo') {
+        setPerson(cof.person as Person);
+      }
+    }
     setFeedbackMsg(null);
   };
 
@@ -162,16 +168,9 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
     setFeedbackMsg('Saldo atual definido como R$ 0,00. Clique em "Salvar Alterações" para confirmar.');
   };
 
-  const handleSetBalanceToInitial = () => {
-    setEditCurrentBalance(editInitialBalance || '0');
-    setFeedbackMsg(`Saldo atual igualado ao Saldo Inicial (${formatCurrency(parseFloat(editInitialBalance) || 0)}).`);
-  };
-
   const handleCalculateBalanceFromMovements = () => {
     const movs = cofrinhoMovements.filter((m) => m.cofrinhoId === cofrinhoId);
-    let calc = parseFloat(editInitialBalance.replace(',', '.')) || 0;
-    let monthlyY = 0;
-    let accY = 0;
+    let calc = selectedCofrinho?.initialBalance || 0;
     movs.forEach((m) => {
       if (m.type === 'aporte') {
         calc += m.amount;
@@ -179,16 +178,10 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
         calc = Math.max(0, calc - m.amount);
       } else if (m.type === 'rendimento') {
         calc += m.amount;
-        accY += m.amount;
-        if (m.date.startsWith(selectedMonth)) {
-          monthlyY += m.amount;
-        }
       }
     });
     setEditCurrentBalance(String(Math.round(calc * 100) / 100));
-    setEditMonthlyYield(String(Math.round(monthlyY * 100) / 100));
-    setEditAccumulatedYield(String(Math.round(accY * 100) / 100));
-    setFeedbackMsg(`Saldo calculado com base em ${movs.length} movimentação(ões): ${formatCurrency(calc)}.`);
+    setFeedbackMsg(`Saldo recalculado pelas movimentações históricas: ${formatCurrency(calc)}.`);
   };
 
   const selectedCofrinho = cofrinhos.find((c) => c.id === cofrinhoId) || cofrinhos[0];
@@ -201,10 +194,15 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
     selectedCofrinho?.customAnnualRate || 0
   );
 
+  const numParsedAmount = parseFloat(amount.replace(',', '.')) || 0;
+  const projectedBalanceAfter = movType === 'retirada'
+    ? Math.max(0, (selectedCofrinho?.currentBalance || 0) - numParsedAmount)
+    : (selectedCofrinho?.currentBalance || 0) + (movType === 'aporte' ? numParsedAmount : 0);
+
   const previewYield = calculateMonthlyYieldDetails(
-    selectedCofrinho?.currentBalance || 0,
+    projectedBalanceAfter,
     annualRate,
-    movType === 'aporte' ? parseFloat(amount.replace(',', '.')) || 0 : 0,
+    0,
     0,
     globalCofrinhoSettings.defaultIncomeTaxRate || 15
   );
@@ -222,11 +220,18 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
     const cof = cofrinhos.find((c) => c.id === cofrinhoId);
     const finalNotes = notes.trim();
 
+    if (movType === 'retirada' && numAmount > (cof?.currentBalance || 0)) {
+      const confirmExceed = window.confirm(
+        `O valor do resgate (${formatCurrency(numAmount)}) é maior do que o saldo atual disponível neste cofrinho (${formatCurrency(cof?.currentBalance || 0)}). Deseja confirmar e zerar o saldo?`
+      );
+      if (!confirmExceed) return;
+    }
+
     if (movType === 'aporte' || movType === 'retirada') {
       const isAporte = movType === 'aporte';
       const defaultDesc = isAporte
         ? `Aporte - ${cof?.name || 'Cofrinho'}`
-        : `Resgate - ${cof?.name || 'Cofrinho'}`;
+        : `Resgate de Saldo - ${cof?.name || 'Cofrinho'}`;
       const finalDesc = finalNotes || defaultDesc;
 
       const createdTx = addTransaction({
@@ -261,7 +266,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
         cofrinhoMovementId: createdMov.id,
       });
 
-      if (cofrinhoId === 'cof-reserva' && isAporte) {
+      if ((cofrinhoId === 'cof-reserva' || cofrinhoId === 'cof-reserva-ellen' || cof?.type === 'reserva') && isAporte) {
         if (person === 'Ricardo' || person === 'Ellen') {
           setMonthlyAporteStatus(person, 'realizado');
         }
@@ -306,6 +311,24 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
     onClose();
   };
 
+  const parsedCurrentBalance = parseFloat(editCurrentBalance.replace(',', '.')) || 0;
+  const editAnnualRate = calculateAnnualRate(
+    globalCofrinhoSettings.cdiAnnualRate,
+    editYieldType,
+    Number(editCdiPercentage),
+    Number(editCustomAnnualRate)
+  );
+  const autoYieldDetails = calculateMonthlyYieldDetails(
+    parsedCurrentBalance,
+    editAnnualRate,
+    0,
+    0,
+    globalCofrinhoSettings.defaultIncomeTaxRate || 15
+  );
+  const autoMonthlyNetYield = editYieldType === 'none' ? 0 : Math.round(autoYieldDetails.netYield * 100) / 100;
+  const autoAccumulatedYield = selectedCofrinho?.accumulatedYield || 0;
+  const autoInitialBalance = selectedCofrinho?.initialBalance !== undefined ? selectedCofrinho.initialBalance : parsedCurrentBalance;
+
   const handleSubmitEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editName.trim()) {
@@ -314,9 +337,22 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
     }
 
     const numCurrentBalance = parseFloat(editCurrentBalance.replace(',', '.'));
-    const numInitialBalance = parseFloat(editInitialBalance.replace(',', '.'));
-    const numMonthlyYield = parseFloat(editMonthlyYield.replace(',', '.'));
-    const numAccumulatedYield = parseFloat(editAccumulatedYield.replace(',', '.'));
+    const effectiveCurrentBalance = !isNaN(numCurrentBalance) ? Math.max(0, numCurrentBalance) : (selectedCofrinho?.currentBalance || 0);
+
+    const finalAnnualRate = calculateAnnualRate(
+      globalCofrinhoSettings.cdiAnnualRate,
+      editYieldType,
+      Number(editCdiPercentage),
+      Number(editCustomAnnualRate)
+    );
+    const finalYieldDetails = calculateMonthlyYieldDetails(
+      effectiveCurrentBalance,
+      finalAnnualRate,
+      0,
+      0,
+      globalCofrinhoSettings.defaultIncomeTaxRate || 15
+    );
+    const finalMonthlyYield = editYieldType === 'none' ? 0 : Math.round(finalYieldDetails.netYield * 100) / 100;
 
     updateCofrinho(cofrinhoId, {
       name: editName.trim(),
@@ -329,10 +365,10 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
       customAnnualRate: Number(editCustomAnnualRate),
       targetAmount: editTargetAmount ? parseFloat(editTargetAmount.replace(',', '.')) : undefined,
       targetDate: editTargetDate || undefined,
-      currentBalance: !isNaN(numCurrentBalance) ? Math.max(0, numCurrentBalance) : (selectedCofrinho?.currentBalance || 0),
-      initialBalance: !isNaN(numInitialBalance) ? Math.max(0, numInitialBalance) : (selectedCofrinho?.initialBalance || 0),
-      monthlyYield: !isNaN(numMonthlyYield) ? Math.max(0, numMonthlyYield) : (selectedCofrinho?.monthlyYield || 0),
-      accumulatedYield: !isNaN(numAccumulatedYield) ? Math.max(0, numAccumulatedYield) : (selectedCofrinho?.accumulatedYield || 0),
+      currentBalance: effectiveCurrentBalance,
+      initialBalance: selectedCofrinho?.initialBalance !== undefined ? selectedCofrinho.initialBalance : effectiveCurrentBalance,
+      monthlyYield: finalMonthlyYield,
+      accumulatedYield: selectedCofrinho?.accumulatedYield || 0,
       status: editStatus,
       notes: editNotes.trim() || undefined,
     });
@@ -359,7 +395,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
           }`}
         >
           <Plus className="w-3.5 h-3.5" />
-          <span>Aporte / Retirada</span>
+          <span>Aporte / Resgate de Saldo</span>
         </button>
 
         <button
@@ -407,7 +443,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
         </select>
       </div>
 
-      {/* TAB 1: MOVEMENT (APORTE / RETIRADA / RENDIMENTO) */}
+      {/* TAB 1: MOVEMENT (APORTE / RESGATE / RENDIMENTO) */}
       {activeTab === 'movement' && (
         <form onSubmit={handleSubmitMovement} className="space-y-4">
           <div>
@@ -431,11 +467,11 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
                 onClick={() => setMovType('retirada')}
                 className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
                   movType === 'retirada'
-                    ? 'bg-red-600 text-white border-red-600 shadow-xs'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
                     : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
                 }`}
               >
-                <Minus className="w-3.5 h-3.5" /> Retirada (-)
+                <ArrowDownLeft className="w-3.5 h-3.5" /> Resgate de Saldo (-)
               </button>
               <button
                 type="button"
@@ -450,6 +486,33 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Destaque Especial quando for Resgate de Saldo */}
+          {movType === 'retirada' && (
+            <div className="p-3.5 bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-xl space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold text-amber-950 dark:text-amber-200">
+                  <ArrowDownLeft className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                  <span>Resgate de Saldo em Andamento</span>
+                </div>
+                <span className="font-extrabold text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-900/60 px-2.5 py-0.5 rounded-lg">
+                  Saldo Disponível: {formatCurrency(selectedCofrinho?.currentBalance || 0)}
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                O valor resgatado será debitado do saldo do cofrinho/reserva e adicionado como receita/disponibilidade. A projeção de rendimento mensal será recalculada automaticamente com base no saldo restante.
+              </p>
+              {selectedCofrinho?.currentBalance > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setAmount(String(selectedCofrinho.currentBalance))}
+                  className="text-[11px] font-bold text-amber-700 dark:text-amber-300 hover:underline inline-flex items-center gap-1 pt-0.5"
+                >
+                  <span>→ Preencher resgate do saldo total ({formatCurrency(selectedCofrinho.currentBalance)})</span>
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Person */}
           <div>
@@ -511,7 +574,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                Valor (R$)
+                {movType === 'retirada' ? 'Valor a Resgatar (R$)' : 'Valor (R$)'}
               </label>
               <div className="relative">
                 <span className="absolute left-3.5 top-2.5 text-sm font-medium text-slate-400">R$</span>
@@ -543,16 +606,26 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
 
           {/* Yield estimate preview */}
           {selectedCofrinho?.yieldType !== 'none' && (
-            <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-900/50 rounded-xl text-xs flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-indigo-600" />
-                <span className="text-slate-600 dark:text-slate-300">
-                  Rendimento Mensal Estimado ({annualRate.toFixed(2)}% a.a.):
+            <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-900/50 rounded-xl text-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-600" />
+                  <span className="text-slate-600 dark:text-slate-300">
+                    {movType === 'retirada' ? 'Novo Rendimento Mensal Pós-Resgate:' : `Rendimento Mensal Estimado (${annualRate.toFixed(2)}% a.a.):`}
+                  </span>
+                </div>
+                <span className="font-bold text-indigo-700 dark:text-indigo-300">
+                  +{formatCurrency(previewYield.netYield)} / mês
                 </span>
               </div>
-              <span className="font-bold text-indigo-700 dark:text-indigo-300">
-                +{formatCurrency(previewYield.netYield)} / mês
-              </span>
+              {movType === 'retirada' && (
+                <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-1 border-t border-indigo-100 dark:border-indigo-900/40">
+                  <span>Saldo remanescente projetado:</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">
+                    {formatCurrency(projectedBalanceAfter)}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -563,7 +636,7 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder="Ex: Aporte mensal complementar ou resgate para manutenção"
+              placeholder={movType === 'retirada' ? 'Ex: Resgate emergencial para despesa imprevista' : 'Ex: Aporte mensal complementar'}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full px-3.5 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500"
@@ -580,9 +653,19 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition-colors"
+              className={`px-5 py-2 text-xs font-bold text-white rounded-xl shadow-xs transition-colors ${
+                movType === 'retirada'
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : movType === 'rendimento'
+                  ? 'bg-blue-600 hover:bg-blue-700'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
             >
-              Confirmar Movimentação
+              {movType === 'retirada'
+                ? `Confirmar Resgate de Saldo (${formatCurrency(numParsedAmount)})`
+                : movType === 'rendimento'
+                ? `Creditar Rendimento (${formatCurrency(numParsedAmount)})`
+                : `Confirmar Aporte (${formatCurrency(numParsedAmount)})`}
             </button>
           </div>
         </form>
@@ -730,20 +813,39 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
 
               <button
                 type="button"
-                onClick={handleSetBalanceToInitial}
-                className="px-2.5 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-lg transition-colors flex items-center gap-1"
-              >
-                <Wallet className="w-3 h-3" />
-                <span>Igualar ao Saldo Inicial</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={handleCalculateBalanceFromMovements}
                 className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 rounded-lg transition-colors flex items-center gap-1"
               >
                 <Calculator className="w-3 h-3" />
                 <span>Calcular pelas Movimentações</span>
+              </button>
+            </div>
+
+            {/* Opção Rápida de Resgate de Saldo */}
+            <div className="p-3 bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mt-2">
+              <div className="flex items-start gap-2.5">
+                <div className="p-2 bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 rounded-lg shrink-0 mt-0.5 sm:mt-0">
+                  <ArrowDownLeft className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-xs font-bold text-amber-950 dark:text-amber-200 block">
+                    Houve resgate de saldo deste cofrinho / reserva?
+                  </span>
+                  <span className="text-[11px] text-amber-800/90 dark:text-amber-300/80 block mt-0.5">
+                    Registre saídas para atualizar o saldo e manter os rendimentos recalculados sobre o montante remanescente.
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('movement');
+                  setMovType('retirada');
+                }}
+                className="px-3.5 py-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-colors flex items-center gap-1.5 shadow-xs shrink-0"
+              >
+                <ArrowDownLeft className="w-3.5 h-3.5" />
+                <span>Registrar Resgate de Saldo</span>
               </button>
             </div>
 
@@ -756,52 +858,59 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
             )}
           </div>
 
-          {/* Additional Balance Details: Saldo Inicial & Rendimentos */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-xs">
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                Saldo Inicial Base (R$)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={editInitialBalance}
-                onChange={(e) => setEditInitialBalance(e.target.value)}
-                className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-semibold"
-              />
-              <span className="text-[10px] text-slate-400 mt-0.5 block">Saldo no início do plano</span>
+          {/* Cálculo Automático de Rendimentos e Saldo Base (Sem preenchimento manual) */}
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+                <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <span>Rendimentos & Saldo Base (Calculados Automaticamente)</span>
+              </div>
+              <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                Base: Saldo Atual {formatCurrency(parsedCurrentBalance)}
+              </span>
             </div>
 
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                Rendimento do Mês (R$)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={editMonthlyYield}
-                onChange={(e) => setEditMonthlyYield(e.target.value)}
-                className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-semibold"
-              />
-              <span className="text-[10px] text-slate-400 mt-0.5 block">Rendimento líquido do mês</span>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-lg">
+                <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block">
+                  Rendimento do Mês (Estimado)
+                </span>
+                <span className="text-sm font-black text-emerald-600 dark:text-emerald-400 mt-0.5 block">
+                  {editYieldType === 'none' ? 'Sem rendimento' : `+${formatCurrency(autoMonthlyNetYield)}`}
+                </span>
+                <span className="text-[10px] text-slate-400 block mt-0.5">
+                  {editYieldType === 'none' ? '0% a.a.' : `Taxa líquida: ${editAnnualRate.toFixed(2)}% a.a.`}
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-lg">
+                <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block">
+                  Rendimento Acumulado
+                </span>
+                <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 mt-0.5 block">
+                  {formatCurrency(autoAccumulatedYield)}
+                </span>
+                <span className="text-[10px] text-slate-400 block mt-0.5">
+                  Total histórico registrado
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-lg">
+                <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block">
+                  Saldo Base Histórico
+                </span>
+                <span className="text-sm font-bold text-slate-700 dark:text-slate-300 mt-0.5 block">
+                  {formatCurrency(autoInitialBalance)}
+                </span>
+                <span className="text-[10px] text-slate-400 block mt-0.5">
+                  Preservado automaticamente
+                </span>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                Rendimento Acumulado (R$)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={editAccumulatedYield}
-                onChange={(e) => setEditAccumulatedYield(e.target.value)}
-                className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-semibold"
-              />
-              <span className="text-[10px] text-slate-400 mt-0.5 block">Total histórico recebido</span>
-            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
+              <span>✨ Esse cálculo é realizado automaticamente com base no saldo atual e rentabilidade configurada, sem necessidade de digitação manual.</span>
+            </p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>

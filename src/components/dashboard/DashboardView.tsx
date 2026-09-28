@@ -264,8 +264,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {formatCurrency(
                 personFilter === 'Todos'
                   ? currentMonthSummary.balance
-                  : currentMonthSummary.incomeByPerson[personFilter] -
-                      currentMonthSummary.expenseByPerson[personFilter]
+                  : (currentMonthSummary.incomeByPerson[personFilter] || 0) +
+                    (currentMonthSummary.transfersReceivedAsExtraByPerson?.[personFilter] || 0) -
+                    (currentMonthSummary.expenseByPerson[personFilter] || 0) -
+                    (currentMonthSummary.transfersSentByPerson?.[personFilter] || 0)
               )}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -381,9 +383,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {(['Ricardo', 'Ellen', 'Família'] as Person[]).map((person) => {
             const colors = getPersonBadgeColor(person);
-            const income = currentMonthSummary.incomeByPerson[person];
-            const expense = currentMonthSummary.expenseByPerson[person];
-            const net = income - expense;
+            const income = currentMonthSummary.incomeByPerson[person] || 0;
+            const expense = currentMonthSummary.expenseByPerson[person] || 0;
+            const extraReceived = currentMonthSummary.transfersReceivedAsExtraByPerson?.[person] || 0;
+            const transferSent = currentMonthSummary.transfersSentByPerson?.[person] || 0;
+            const net = income + extraReceived - expense - transferSent;
 
             return (
               <div
@@ -424,6 +428,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {(extraReceived > 0 || transferSent > 0) && (
+                  <div className="pt-2 border-t border-dashed border-slate-200 dark:border-slate-700/60 space-y-1 text-[11px]">
+                    {extraReceived > 0 && (
+                      <div className="flex items-center justify-between text-purple-700 dark:text-purple-300 font-medium">
+                        <span>+ Saldo Extra (Transf. Recebida):</span>
+                        <span className="font-bold">+{formatCurrency(extraReceived)}</span>
+                      </div>
+                    )}
+                    {transferSent > 0 && (
+                      <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                        <span>- Transf. Enviada:</span>
+                        <span className="font-semibold">-{formatCurrency(transferSent)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1018,11 +1039,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
                           {tx.description}
                         </span>
-                        {tx.isDemo && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 font-semibold">
-                            Demo
-                          </span>
-                        )}
                         {tx.type === 'investimento' && (
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 font-semibold">
                             Investimento

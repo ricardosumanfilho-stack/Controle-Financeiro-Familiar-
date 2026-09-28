@@ -633,11 +633,6 @@ export const CardsView: React.FC<CardsViewProps> = ({
                         <span className="font-bold text-sm text-slate-900 dark:text-slate-100">
                           {inst.description}
                         </span>
-                        {inst.isDemo && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-semibold">
-                            Demo
-                          </span>
-                        )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                         <span>{card?.name || 'Cartão'}</span>
@@ -782,11 +777,6 @@ export const CardsView: React.FC<CardsViewProps> = ({
                         <span className="font-bold text-sm text-slate-900 dark:text-slate-100 truncate" title={subTitle}>
                           {subTitle}
                         </span>
-                        {sub.isDemo && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-semibold">
-                            Demo
-                          </span>
-                        )}
                         {sub.status === 'paused' && (
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 font-semibold">
                             Pausada

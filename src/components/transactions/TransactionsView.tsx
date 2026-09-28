@@ -429,21 +429,17 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           {tx.description}
                         </span>
 
-                        {tx.isDemo && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 font-semibold">
-                            Demo
-                          </span>
-                        )}
-
                         {tx.type === 'investimento' && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 font-semibold">
-                            Investimento
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 font-semibold flex items-center gap-1">
+                            Investimento {tx.brokerage ? `• ${tx.brokerage}` : ''}
                           </span>
                         )}
 
                         {tx.type === 'transferencia' && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 font-semibold">
-                            Transferência Interna
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 font-semibold flex items-center gap-1">
+                            {tx.transferType === 'externa' || tx.isExternalTransfer
+                              ? `Transf. Externa ${tx.externalOrigin ? `(${tx.externalOrigin})` : ''}`
+                              : `Transf. Usuários ${tx.destinationPerson ? `➔ ${tx.destinationPerson} (Extra)` : ''}`}
                           </span>
                         )}
 

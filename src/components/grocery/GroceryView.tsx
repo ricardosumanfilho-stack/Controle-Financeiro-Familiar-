@@ -414,12 +414,6 @@ export const GroceryView: React.FC<GroceryViewProps> = ({
                           {trip.storeName}
                         </span>
 
-                        {trip.isDemo && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-semibold">
-                            Demo
-                          </span>
-                        )}
-
                         <span className={`px-2 py-0.5 rounded-md font-semibold text-[10px] ${personColors.badge}`}>
                           {trip.person}
                         </span>

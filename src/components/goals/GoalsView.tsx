@@ -33,12 +33,15 @@ import {
   PiggyBank,
   ArrowDownRight,
   ArrowRightLeft,
+  ArrowDownLeft,
   Settings2,
   Percent,
   Calculator,
   AlertTriangle,
   XCircle,
   HelpCircle,
+  User,
+  Users,
 } from 'lucide-react';
 import { Person, CofrinhoYieldType, MonthlyAporteStatus } from '../../types';
 import { CofrinhoModal } from './CofrinhoModal';
@@ -60,6 +63,9 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
     emergencyContributions,
     emergencySettings,
     totalEmergencyFund,
+    ricardoEmergencyFund,
+    ellenEmergencyFund,
+    salarySettings,
     selectedMonth,
     deleteInvestmentContribution,
     deleteEmergencyContribution,
@@ -74,18 +80,26 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
   } = useFinance();
 
   const [activeSubTab, setActiveSubTab] = useState<'all' | 'cofrinhos' | 'emergency' | 'extraordinary'>('cofrinhos');
+  const [reservaViewTab, setReservaViewTab] = useState<'both' | 'ricardo' | 'ellen'>('both');
+  const [cofrinhoFilterMode, setCofrinhoFilterMode] = useState<'demais' | 'todos'>('demais');
   const [isCofrinhoModalOpen, setIsCofrinhoModalOpen] = useState(false);
   const [selectedCofrinhoIdForModal, setSelectedCofrinhoIdForModal] = useState<string>('cof-reserva');
   const [cofrinhoModalInitialMode, setCofrinhoModalInitialMode] = useState<'movement' | 'transfer' | 'edit'>('movement');
+  const [cofrinhoModalInitialMovType, setCofrinhoModalInitialMovType] = useState<'aporte' | 'retirada' | 'rendimento'>('aporte');
   const [isExtraordinaryModalOpen, setIsExtraordinaryModalOpen] = useState(false);
   const [isCdiSettingsOpen, setIsCdiSettingsOpen] = useState(false);
   const [tempCdiRate, setTempCdiRate] = useState(globalCofrinhoSettings.cdiAnnualRate);
   const [appliedYieldSuccess, setAppliedYieldSuccess] = useState(false);
   const [movementToDelete, setMovementToDelete] = useState<string | null>(null);
 
-  const handleOpenCofrinhoModal = (id: string = 'cof-reserva', mode: 'movement' | 'transfer' | 'edit' = 'movement') => {
+  const handleOpenCofrinhoModal = (
+    id: string = 'cof-reserva',
+    mode: 'movement' | 'transfer' | 'edit' = 'movement',
+    movType: 'aporte' | 'retirada' | 'rendimento' = 'aporte'
+  ) => {
     setSelectedCofrinhoIdForModal(id);
     setCofrinhoModalInitialMode(mode);
+    setCofrinhoModalInitialMovType(movType);
     setIsCofrinhoModalOpen(true);
   };
 
@@ -114,37 +128,114 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
     .filter((i) => i.person === 'Ellen')
     .reduce((sum, i) => sum + i.amount, 0);
 
-  // Emergency Fund Metrics & Breakdown
-  const resCof = cofrinhos.find((c) => c.type === 'reserva');
-  const currentEmergencyValue = resCof ? resCof.currentBalance : totalEmergencyFund;
-  const emergencyTarget = emergencySettings.targetAmount || 55200;
-  const emergencyRemaining = Math.max(0, emergencyTarget - currentEmergencyValue);
+  // ==========================================
+  // RESERVA DE EMERGÊNCIA SEPARADA & CONSOLIDADA
+  // ==========================================
+
+  // 1. Identificação dos Cofrinhos Individuais de Reserva
+  const ricardoResCof = cofrinhos.find(
+    (c) => c.id === 'cof-reserva' || (c.type === 'reserva' && c.person === 'Ricardo')
+  );
+  const ellenResCof = cofrinhos.find(
+    (c) => c.id === 'cof-reserva-ellen' || (c.type === 'reserva' && c.person === 'Ellen')
+  );
+
+  const ricardoCofId = ricardoResCof?.id || 'cof-reserva';
+  const ellenCofId = ellenResCof?.id || 'cof-reserva-ellen';
+
+  // 2. Saldos Atuais Individuais
+  const ricardoBalance = ricardoResCof ? ricardoResCof.currentBalance : (ricardoEmergencyFund || 0);
+  const ellenBalance = ellenResCof ? ellenResCof.currentBalance : (ellenEmergencyFund || 0);
+
+  // 3. Saldo Total Consolidado (Soma das Duas Reservas)
+  const currentEmergencyValue = ricardoBalance + ellenBalance;
+
+  // 4. Metas Salariais (Base oficial: Ricardo R$ 5.300 x 8 = R$ 42.400 | Ellen R$ 1.600 x 8 = R$ 12.800 | Total = R$ 55.200)
+  const ricardoSalary = salarySettings.ricardoNetSalary || salarySettings.salaryRicardo || 5300;
+  const ellenSalary = salarySettings.ellenNetSalary || salarySettings.salaryEllen || 1600;
+  const ricardoTarget = ricardoResCof?.targetAmount || (8 * ricardoSalary);
+  const ellenTarget = ellenResCof?.targetAmount || (8 * ellenSalary);
+  const emergencyTarget = emergencySettings.targetAmount || (ricardoTarget + ellenTarget) || 55200;
+
+  // 5. Percentuais Individuais e Consolidado
+  const ricardoPercentage = ricardoTarget > 0 ? Math.min(100, (ricardoBalance / ricardoTarget) * 100) : 0;
+  const ellenPercentage = ellenTarget > 0 ? Math.min(100, (ellenBalance / ellenTarget) * 100) : 0;
   const emergencyPercentage = emergencyTarget > 0 ? Math.min(100, (currentEmergencyValue / emergencyTarget) * 100) : 0;
+
+  // 6. Valores Restantes
+  const ricardoRemaining = Math.max(0, ricardoTarget - ricardoBalance);
+  const ellenRemaining = Math.max(0, ellenTarget - ellenBalance);
+  const emergencyRemaining = Math.max(0, emergencyTarget - currentEmergencyValue);
+
+  const isRicardoMet = ricardoBalance >= ricardoTarget;
+  const isEllenMet = ellenBalance >= ellenTarget;
   const isEmergencyMet = currentEmergencyValue >= emergencyTarget;
 
-  // Breakdown of Emergency Fund Origins
-  const resMovements = cofrinhoMovements.filter((m) => m.cofrinhoId === 'cof-reserva');
-  const ricardoResContributions = resMovements
-    .filter((m) => m.type === 'aporte' && m.person === 'Ricardo')
+  // 7. Movimentações por Pessoa / Cofrinho
+  const ricardoMovements = cofrinhoMovements.filter((m) => m.cofrinhoId === ricardoCofId);
+  const ricardoResContributions = ricardoMovements
+    .filter((m) => m.type === 'aporte')
     .reduce((s, m) => s + m.amount, 0);
-  const ellenResContributions = resMovements
-    .filter((m) => m.type === 'aporte' && m.person === 'Ellen')
-    .reduce((s, m) => s + m.amount, 0);
-  const extraordinaryResContributions = resMovements
-    .filter((m) => m.type === 'aporte' && m.isExtraordinaryShare)
-    .reduce((s, m) => s + m.amount, 0);
-  const yieldResTotal = resMovements
+  const ricardoYieldTotal = ricardoMovements
     .filter((m) => m.type === 'rendimento')
     .reduce((s, m) => s + m.amount, 0);
-  const withdrawResTotal = resMovements
+  const ricardoWithdrawTotal = ricardoMovements
     .filter((m) => m.type === 'retirada')
     .reduce((s, m) => s + m.amount, 0);
 
-  // Time to Completion Estimation (based on R$ 1.000/month contributions + CDI yield)
+  const ellenMovements = cofrinhoMovements.filter((m) => m.cofrinhoId === ellenCofId);
+  const ellenResContributions = ellenMovements
+    .filter((m) => m.type === 'aporte')
+    .reduce((s, m) => s + m.amount, 0);
+  const ellenYieldTotal = ellenMovements
+    .filter((m) => m.type === 'rendimento')
+    .reduce((s, m) => s + m.amount, 0);
+  const ellenWithdrawTotal = ellenMovements
+    .filter((m) => m.type === 'retirada')
+    .reduce((s, m) => s + m.amount, 0);
+
+  // Rendas extraordinárias direcionadas para qualquer uma das reservas
+  const extraordinaryResContributions = cofrinhoMovements
+    .filter((m) => (m.cofrinhoId === ricardoCofId || m.cofrinhoId === ellenCofId) && m.isExtraordinaryShare)
+    .reduce((s, m) => s + m.amount, 0);
+
+  const yieldResTotal = ricardoYieldTotal + ellenYieldTotal;
+
+  // 8. Rentabilidade Mensal Automática baseada no CDI para cada Reserva
+  const ricardoAnnualRate = calculateAnnualRate(
+    globalCofrinhoSettings.cdiAnnualRate,
+    ricardoResCof?.yieldType || 'cdi_100',
+    ricardoResCof?.cdiPercentage || 100,
+    ricardoResCof?.customAnnualRate || 0
+  );
+  const ricardoMonthlyYieldEst = calculateMonthlyYieldDetails(
+    ricardoBalance,
+    ricardoAnnualRate,
+    0,
+    0,
+    globalCofrinhoSettings.defaultIncomeTaxRate || 15
+  );
+
+  const ellenAnnualRate = calculateAnnualRate(
+    globalCofrinhoSettings.cdiAnnualRate,
+    ellenResCof?.yieldType || 'cdi_100',
+    ellenResCof?.cdiPercentage || 100,
+    ellenResCof?.customAnnualRate || 0
+  );
+  const ellenMonthlyYieldEst = calculateMonthlyYieldDetails(
+    ellenBalance,
+    ellenAnnualRate,
+    0,
+    0,
+    globalCofrinhoSettings.defaultIncomeTaxRate || 15
+  );
+
+  const totalMonthlyYieldEstimated = ricardoMonthlyYieldEst.netYield + ellenMonthlyYieldEst.netYield;
+
+  // 9. Estimativa de Tempo de Conclusão Consolidada (Aporte fixo familiar R$ 1.000/mês + rendimentos)
   const monthlyFixedAporte = (emergencySettings.ricardoMonthlyObligation || 500) + (emergencySettings.ellenMonthlyObligation || 500);
   const monthlyRateCDI = Math.pow(1 + (globalCofrinhoSettings.cdiAnnualRate / 100), 1 / 12) - 1;
 
-  // Approximate remaining months with compound yield
   let simulatedBalance = currentEmergencyValue;
   let remainingMonthsCount = 0;
   if (!isEmergencyMet && (monthlyFixedAporte > 0 || monthlyRateCDI > 0)) {
@@ -238,9 +329,10 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
         </div>
       </div>
 
-      {/* 1. SEÇÃO PRINCIPAL: RESERVA DE EMERGÊNCIA (8 Meses de Renda Salarial = R$ 55.200) */}
-      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-5">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      {/* 1. SEÇÃO PRINCIPAL: RESERVA DE EMERGÊNCIA — JANELAS SEPARADAS E DASHBOARD CONSOLIDADA */}
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-6">
+        {/* Cabeçalho da Seção com Navegação de Abas */}
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-amber-100 dark:bg-amber-950/50 text-amber-600 rounded-2xl">
               <ShieldCheck className="w-7 h-7" />
@@ -250,17 +342,57 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
                 <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
                   Pilar de Segurança Familiar
                 </span>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold">
-                  8 Meses Salariais
+                <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold">
+                  8 Meses Salariais (Meta R$ 55.200)
                 </span>
               </div>
-              <h3 className="text-xl font-black text-slate-900 dark:text-slate-100">
-                Reserva de Emergência ({formatCurrency(emergencyTarget)})
+              <h3 className="text-xl font-black text-slate-900 dark:text-slate-100 mt-0.5">
+                Reserva de Emergência Familiar
               </h3>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Seletor de Janelas: Ambas / Ricardo / Ellen */}
+            <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setReservaViewTab('both')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  reservaViewTab === 'both'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Ambas as Janelas</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setReservaViewTab('ricardo')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  reservaViewTab === 'ricardo'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-500 hover:text-blue-600 dark:hover:text-blue-400'
+                }`}
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>Janela Ricardo</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setReservaViewTab('ellen')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  reservaViewTab === 'ellen'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'text-slate-500 hover:text-rose-600 dark:hover:text-rose-400'
+                }`}
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>Janela Ellen</span>
+              </button>
+            </div>
+
             <button
               id="emergency-settings-btn"
               onClick={onOpenEmergencySettings}
@@ -278,9 +410,9 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
             <div className="flex items-center gap-3">
               <Award className="w-8 h-8 text-amber-300 shrink-0" />
               <div>
-                <h4 className="font-black text-base">Meta da Reserva de Emergência Concluída!</h4>
+                <h4 className="font-black text-base">Meta da Reserva Familiar Blindada com Sucesso!</h4>
                 <p className="text-xs text-emerald-100">
-                  Os R$ 55.200 foram alcançados. 70% das próximas rendas extraordinárias serão automaticamente redirecionados para a <strong>Compra da Nova Casa</strong>.
+                  Os {formatCurrency(emergencyTarget)} foram alcançados somando as reservas de Ricardo e Ellen. 70% das próximas rendas extraordinárias serão direcionadas para a <strong>Compra da Nova Casa</strong>.
                 </p>
               </div>
             </div>
@@ -290,21 +422,41 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
           </div>
         ) : null}
 
-        {/* Dashboard Banner da Reserva */}
-        <div className="p-5 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent border border-amber-200 dark:border-amber-900/50 rounded-2xl space-y-5">
+        {/* DASHBOARD CONSOLIDADA (TOTAL DAS DUAS RESERVAS) */}
+        <div className="p-5 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent border border-amber-200 dark:border-amber-900/50 rounded-2xl space-y-4 shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+              <Layers className="w-4 h-4" />
+              Dashboard Consolidada — Total das Duas Reservas
+            </span>
+            <span className="text-xs font-medium text-slate-500">
+              Ricardo ({((ricardoBalance / (currentEmergencyValue || 1)) * 100).toFixed(0)}%) + Ellen ({((ellenBalance / (currentEmergencyValue || 1)) * 100).toFixed(0)}%)
+            </span>
+          </div>
+
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                Saldo Atual Consolidado
+                Saldo Atual Consolidado (Total Ricardo + Ellen)
               </span>
-              <h4 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-slate-100 mt-0.5">
-                {formatCurrency(currentEmergencyValue)}
-              </h4>
+              <div className="flex flex-wrap items-baseline gap-3 mt-0.5">
+                <h4 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-slate-100">
+                  {formatCurrency(currentEmergencyValue)}
+                </h4>
+                <div className="flex items-center gap-1.5 text-xs font-semibold">
+                  <span className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
+                    Ricardo: {formatCurrency(ricardoBalance)}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300">
+                    Ellen: {formatCurrency(ellenBalance)}
+                  </span>
+                </div>
+              </div>
             </div>
 
             <div className="text-left sm:text-right">
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                Meta Salarial (8 × {formatCurrency(emergencySettings.familySalaryIncome || 6900)})
+                Meta Salarial Total (8 × {formatCurrency(emergencySettings.familySalaryIncome || (ricardoSalary + ellenSalary))})
               </span>
               <h4 className="text-2xl font-black text-amber-700 dark:text-amber-300 mt-0.5">
                 {formatCurrency(emergencyTarget)}
@@ -312,7 +464,7 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
             </div>
           </div>
 
-          {/* Progress bar */}
+          {/* Progress bar consolidada */}
           <div className="space-y-1.5">
             <div className="w-full bg-slate-200 dark:bg-slate-700 h-4 rounded-full overflow-hidden p-0.5">
               <div
@@ -322,144 +474,356 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
-              <span>{emergencyPercentage.toFixed(1)}% da meta atingida</span>
+              <span>{emergencyPercentage.toFixed(1)}% da meta familiar atingida</span>
               <span>
                 {isEmergencyMet
                   ? 'Meta completa!'
-                  : `Faltam ${formatCurrency(emergencyRemaining)} (${remainingMonthsCount} meses est.)`}
+                  : `Faltam ${formatCurrency(emergencyRemaining)} no total (${remainingMonthsCount} meses est.)`}
               </span>
             </div>
           </div>
 
           {/* KPI Metrics: Detailed Origin Breakdown */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2.5 pt-3 border-t border-amber-200/60 dark:border-amber-800/40 text-xs">
-            <div className="p-2.5 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-3 border-t border-amber-200/60 dark:border-amber-800/40 text-xs">
+            <div className="p-2.5 bg-white/85 dark:bg-slate-900/85 rounded-xl border border-slate-200 dark:border-slate-800">
               <span className="text-slate-400 text-[10px] block">Aportes Ricardo</span>
               <span className="text-sm font-bold text-blue-600 dark:text-blue-400">
                 {formatCurrency(ricardoResContributions)}
               </span>
             </div>
 
-            <div className="p-2.5 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800">
+            <div className="p-2.5 bg-white/85 dark:bg-slate-900/85 rounded-xl border border-slate-200 dark:border-slate-800">
               <span className="text-slate-400 text-[10px] block">Aportes Ellen</span>
               <span className="text-sm font-bold text-rose-600 dark:text-rose-400">
                 {formatCurrency(ellenResContributions)}
               </span>
             </div>
 
-            <div className="p-2.5 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800">
+            <div className="p-2.5 bg-white/85 dark:bg-slate-900/85 rounded-xl border border-slate-200 dark:border-slate-800">
               <span className="text-slate-400 text-[10px] block">Renda Extra (70%)</span>
               <span className="text-sm font-bold text-amber-600 dark:text-amber-400">
                 {formatCurrency(extraordinaryResContributions)}
               </span>
             </div>
 
-            <div className="p-2.5 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800">
-              <span className="text-slate-400 text-[10px] block">Rendimentos</span>
+            <div className="p-2.5 bg-white/85 dark:bg-slate-900/85 rounded-xl border border-slate-200 dark:border-slate-800">
+              <span className="text-slate-400 text-[10px] block">Rendimentos Totais</span>
               <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
                 +{formatCurrency(yieldResTotal)}
               </span>
             </div>
 
-            <div className="p-2.5 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800">
-              <span className="text-slate-400 text-[10px] block">Meses Restantes</span>
-              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                {isEmergencyMet ? '0 meses' : `~${remainingMonthsCount} meses`}
+            <div className="p-2.5 bg-white/85 dark:bg-slate-900/85 rounded-xl border border-slate-200 dark:border-slate-800">
+              <span className="text-slate-400 text-[10px] block">Rend. Mensal Est.</span>
+              <span className="text-sm font-bold text-teal-600 dark:text-teal-400">
+                +{formatCurrency(totalMonthlyYieldEstimated)}/mês
               </span>
             </div>
 
-            <div className="p-2.5 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800">
-              <span className="text-slate-400 text-[10px] block">Data Conclusão</span>
+            <div className="p-2.5 bg-white/85 dark:bg-slate-900/85 rounded-xl border border-slate-200 dark:border-slate-800">
+              <span className="text-slate-400 text-[10px] block">Previsão Conclusão</span>
               <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400">
-                {isEmergencyMet ? 'Concluída' : formattedEstimatedDate}
+                {isEmergencyMet ? 'Concluída' : `~${remainingMonthsCount}m (${formattedEstimatedDate})`}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Aportes Fixos Obrigatórios Mensais (R$ 500 Ricardo + R$ 500 Ellen) */}
-        <div className="space-y-3 pt-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-              <Clock className="w-4 h-4 text-indigo-600" />
-              Aportes Fixos Mensais — {formatMonthYearBR(selectedMonth)} (R$ 500 por pessoa)
-            </span>
-            <span className="text-xs text-slate-500 font-medium">
-              Total Fixo: R$ 1.000 / mês
-            </span>
-          </div>
+        {/* AS DUAS JANELAS SEPARADAS (RICARDO e ELLEN) */}
+        <div className={`grid gap-6 ${reservaViewTab === 'both' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+          {/* ===================================================== */}
+          {/* JANELA 1: RESERVA DE EMERGÊNCIA — RICARDO */}
+          {/* ===================================================== */}
+          {(reservaViewTab === 'both' || reservaViewTab === 'ricardo') && (
+            <div className="p-5 bg-gradient-to-br from-blue-50/50 via-slate-50/30 to-white dark:from-blue-950/20 dark:via-slate-900/80 dark:to-slate-900 border-2 border-blue-200/80 dark:border-blue-900/60 rounded-2xl space-y-4 shadow-sm relative overflow-hidden">
+              {/* Top Accent Line */}
+              <div className="absolute top-0 left-0 right-0 h-1 bg-blue-500" />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Card Ricardo */}
-            <div className="p-4 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/50 rounded-2xl space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
-                  <span className="font-bold text-sm text-slate-900 dark:text-slate-100">
-                    Ricardo (Aporte R$ 500)
-                  </span>
+              {/* Header da Janela */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-blue-100 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 rounded-xl">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                        Titular: Ricardo
+                      </span>
+                      <span className="text-[10px] px-2 py-0.2 rounded-full bg-blue-100/80 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-semibold">
+                        8 Meses Salariais
+                      </span>
+                    </div>
+                    <h4 className="text-lg font-black text-slate-900 dark:text-slate-100">
+                      Reserva de Emergência — Ricardo
+                    </h4>
+                  </div>
                 </div>
+
                 {renderStatusBadge(emergencySettings.ricardoStatus)}
               </div>
 
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>Status no Mês Atual:</span>
-                <select
-                  value={emergencySettings.ricardoStatus || 'programado'}
-                  onChange={(e) => setMonthlyAporteStatus('Ricardo', e.target.value as MonthlyAporteStatus)}
-                  className="px-2 py-1 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-semibold"
-                >
-                  <option value="programado">Programado</option>
-                  <option value="realizado">Realizado</option>
-                  <option value="parcial">Parcial</option>
-                  <option value="nao_realizado">Não Realizado</option>
-                </select>
+              {/* Valores Principais */}
+              <div className="flex items-baseline justify-between pt-1">
+                <div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    Saldo Atual do Ricardo
+                  </span>
+                  <h5 className="text-2xl sm:text-3xl font-black text-blue-700 dark:text-blue-300">
+                    {formatCurrency(ricardoBalance)}
+                  </h5>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    Meta Individual (8 × {formatCurrency(ricardoSalary)})
+                  </span>
+                  <h6 className="text-lg font-bold text-slate-800 dark:text-slate-200">
+                    {formatCurrency(ricardoTarget)}
+                  </h6>
+                </div>
               </div>
 
-              <button
-                onClick={() => handleOpenCofrinhoModal('cof-reserva', 'movement')}
-                className="w-full py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors flex items-center justify-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Registrar Aporte de R$ 500 p/ Ricardo</span>
-              </button>
-            </div>
-
-            {/* Card Ellen */}
-            <div className="p-4 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800/50 rounded-2xl space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-600" />
-                  <span className="font-bold text-sm text-slate-900 dark:text-slate-100">
-                    Ellen (Aporte R$ 500)
+              {/* Barra de Progresso Individual Ricardo */}
+              <div className="space-y-1">
+                <div className="w-full bg-slate-200 dark:bg-slate-700 h-3 rounded-full overflow-hidden p-0.5">
+                  <div
+                    className="bg-blue-600 h-full rounded-full transition-all"
+                    style={{ width: `${ricardoPercentage}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
+                  <span className="font-bold text-blue-600 dark:text-blue-400">
+                    {ricardoPercentage.toFixed(1)}% atingido
+                  </span>
+                  <span>
+                    {isRicardoMet ? 'Meta individual batida!' : `Faltam ${formatCurrency(ricardoRemaining)}`}
                   </span>
                 </div>
+              </div>
+
+              {/* Informações da Aplicação & Rentabilidade */}
+              <div className="p-3 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-blue-100 dark:border-blue-900/40 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Instituição / Aplicação:</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    {ricardoResCof?.institution || 'Tesouro Direto / Sofisa'} • {ricardoResCof?.applicationType || 'Tesouro Selic / CDB 100% CDI'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Rentabilidade Estimada:</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    +{formatCurrency(ricardoMonthlyYieldEst.netYield)} / mês (CDI {ricardoAnnualRate.toFixed(2)}% a.a.)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Rendimentos Acumulados:</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    +{formatCurrency(ricardoYieldTotal)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Controle do Aporte Obrigatório Mensal de R$ 500 */}
+              <div className="p-3 bg-blue-100/40 dark:bg-blue-950/30 rounded-xl border border-blue-200/60 dark:border-blue-900/50 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-blue-600" />
+                    Aporte Mensal Fixo: R$ 500,00
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-500">Status no Mês:</span>
+                    <select
+                      value={emergencySettings.ricardoStatus || 'programado'}
+                      onChange={(e) => setMonthlyAporteStatus('Ricardo', e.target.value as MonthlyAporteStatus)}
+                      className="px-2 py-0.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md font-semibold"
+                    >
+                      <option value="programado">Programado</option>
+                      <option value="realizado">Realizado</option>
+                      <option value="parcial">Parcial</option>
+                      <option value="nao_realizado">Não Realizado</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Botões de Ação Específicos da Janela do Ricardo */}
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleOpenCofrinhoModal(ricardoCofId, 'movement', 'aporte')}
+                  className="py-2 px-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors flex items-center justify-center gap-1 shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Aporte Ricardo</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenCofrinhoModal(ricardoCofId, 'movement', 'retirada')}
+                  className="py-2 px-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-xl transition-colors flex items-center justify-center gap-1"
+                >
+                  <ArrowDownLeft className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Resgatar Saldo</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenCofrinhoModal(ricardoCofId, 'edit')}
+                  className="py-2 px-2 text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 rounded-xl transition-colors flex items-center justify-center gap-1"
+                >
+                  <Settings2 className="w-3.5 h-3.5" />
+                  <span>Ajustar Saldo</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ===================================================== */}
+          {/* JANELA 2: RESERVA DE EMERGÊNCIA — ELLEN */}
+          {/* ===================================================== */}
+          {(reservaViewTab === 'both' || reservaViewTab === 'ellen') && (
+            <div className="p-5 bg-gradient-to-br from-rose-50/50 via-slate-50/30 to-white dark:from-rose-950/20 dark:via-slate-900/80 dark:to-slate-900 border-2 border-rose-200/80 dark:border-rose-900/60 rounded-2xl space-y-4 shadow-sm relative overflow-hidden">
+              {/* Top Accent Line */}
+              <div className="absolute top-0 left-0 right-0 h-1 bg-rose-500" />
+
+              {/* Header da Janela */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-rose-100 dark:bg-rose-950/70 text-rose-600 dark:text-rose-400 rounded-xl">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                        Titular: Ellen
+                      </span>
+                      <span className="text-[10px] px-2 py-0.2 rounded-full bg-rose-100/80 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 font-semibold">
+                        8 Meses Salariais
+                      </span>
+                    </div>
+                    <h4 className="text-lg font-black text-slate-900 dark:text-slate-100">
+                      Reserva de Emergência — Ellen
+                    </h4>
+                  </div>
+                </div>
+
                 {renderStatusBadge(emergencySettings.ellenStatus)}
               </div>
 
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>Status no Mês Atual:</span>
-                <select
-                  value={emergencySettings.ellenStatus || 'programado'}
-                  onChange={(e) => setMonthlyAporteStatus('Ellen', e.target.value as MonthlyAporteStatus)}
-                  className="px-2 py-1 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg font-semibold"
-                >
-                  <option value="programado">Programado</option>
-                  <option value="realizado">Realizado</option>
-                  <option value="parcial">Parcial</option>
-                  <option value="nao_realizado">Não Realizado</option>
-                </select>
+              {/* Valores Principais */}
+              <div className="flex items-baseline justify-between pt-1">
+                <div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    Saldo Atual da Ellen
+                  </span>
+                  <h5 className="text-2xl sm:text-3xl font-black text-rose-700 dark:text-rose-300">
+                    {formatCurrency(ellenBalance)}
+                  </h5>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    Meta Individual (8 × {formatCurrency(ellenSalary)})
+                  </span>
+                  <h6 className="text-lg font-bold text-slate-800 dark:text-slate-200">
+                    {formatCurrency(ellenTarget)}
+                  </h6>
+                </div>
               </div>
 
-              <button
-                onClick={() => handleOpenCofrinhoModal('cof-reserva', 'movement')}
-                className="w-full py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition-colors flex items-center justify-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Registrar Aporte de R$ 500 p/ Ellen</span>
-              </button>
+              {/* Barra de Progresso Individual Ellen */}
+              <div className="space-y-1">
+                <div className="w-full bg-slate-200 dark:bg-slate-700 h-3 rounded-full overflow-hidden p-0.5">
+                  <div
+                    className="bg-rose-600 h-full rounded-full transition-all"
+                    style={{ width: `${ellenPercentage}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
+                  <span className="font-bold text-rose-600 dark:text-rose-400">
+                    {ellenPercentage.toFixed(1)}% atingido
+                  </span>
+                  <span>
+                    {isEllenMet ? 'Meta individual batida!' : `Faltam ${formatCurrency(ellenRemaining)}`}
+                  </span>
+                </div>
+              </div>
+
+              {/* Informações da Aplicação & Rentabilidade */}
+              <div className="p-3 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-rose-100 dark:border-rose-900/40 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Instituição / Aplicação:</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    {ellenResCof?.institution || 'Nubank / Sofisa'} • {ellenResCof?.applicationType || 'Caixinhas Reserva / CDB 100% CDI'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Rentabilidade Estimada:</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    +{formatCurrency(ellenMonthlyYieldEst.netYield)} / mês (CDI {ellenAnnualRate.toFixed(2)}% a.a.)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Rendimentos Acumulados:</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    +{formatCurrency(ellenYieldTotal)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Controle do Aporte Obrigatório Mensal de R$ 500 */}
+              <div className="p-3 bg-rose-100/40 dark:bg-rose-950/30 rounded-xl border border-rose-200/60 dark:border-rose-900/50 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-rose-600" />
+                    Aporte Mensal Fixo: R$ 500,00
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-500">Status no Mês:</span>
+                    <select
+                      value={emergencySettings.ellenStatus || 'programado'}
+                      onChange={(e) => setMonthlyAporteStatus('Ellen', e.target.value as MonthlyAporteStatus)}
+                      className="px-2 py-0.5 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md font-semibold"
+                    >
+                      <option value="programado">Programado</option>
+                      <option value="realizado">Realizado</option>
+                      <option value="parcial">Parcial</option>
+                      <option value="nao_realizado">Não Realizado</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Botões de Ação Específicos da Janela da Ellen */}
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleOpenCofrinhoModal(ellenCofId, 'movement', 'aporte')}
+                  className="py-2 px-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition-colors flex items-center justify-center gap-1 shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Aporte Ellen</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenCofrinhoModal(ellenCofId, 'movement', 'retirada')}
+                  className="py-2 px-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-xl transition-colors flex items-center justify-center gap-1"
+                >
+                  <ArrowDownLeft className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Resgatar Saldo</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenCofrinhoModal(ellenCofId, 'edit')}
+                  className="py-2 px-2 text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 rounded-xl transition-colors flex items-center justify-center gap-1"
+                >
+                  <Settings2 className="w-3.5 h-3.5" />
+                  <span>Ajustar Saldo</span>
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -476,11 +840,37 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
               </span>
             </div>
             <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100 mt-0.5">
-              Cofrinhos e Metas Estruturadas
+              Demais Cofrinhos e Metas Estruturadas
             </h3>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Filtro: Demais Metas vs Todos */}
+            <div className="flex p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs">
+              <button
+                type="button"
+                onClick={() => setCofrinhoFilterMode('demais')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                  cofrinhoFilterMode === 'demais'
+                    ? 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                Metas Específicas ({cofrinhos.filter((c) => c.type !== 'reserva').length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCofrinhoFilterMode('todos')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                  cofrinhoFilterMode === 'todos'
+                    ? 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                Todos ({cofrinhos.length})
+              </button>
+            </div>
+
             <button
               onClick={() => setIsCdiSettingsOpen(!isCdiSettingsOpen)}
               className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl transition-colors"
@@ -552,7 +942,7 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
 
         {/* Cofrinhos Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {cofrinhos.map((cof) => {
+          {(cofrinhoFilterMode === 'demais' ? cofrinhos.filter((c) => c.type !== 'reserva') : cofrinhos).map((cof) => {
             const pct = cof.targetAmount ? Math.min(100, (cof.currentBalance / cof.targetAmount) * 100) : 0;
             const cofAnnualRate = calculateAnnualRate(
               globalCofrinhoSettings.cdiAnnualRate,
@@ -649,22 +1039,46 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
                 </div>
 
                 {/* Actions Footer */}
-                <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
+                <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleOpenCofrinhoModal(cof.id, 'movement')}
-                      className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                      onClick={() => handleOpenCofrinhoModal(cof.id, 'movement', 'aporte')}
+                      className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-0.5"
+                      title="Registrar aporte"
                     >
-                      <Plus className="w-3.5 h-3.5" /> Aporte / Retirada
+                      <Plus className="w-3.5 h-3.5" /> Aporte
+                    </button>
+
+                    <span className="text-slate-300 dark:text-slate-700">|</span>
+
+                    <button
+                      onClick={() => handleOpenCofrinhoModal(cof.id, 'movement', 'retirada')}
+                      className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-0.5"
+                      title="Registrar resgate de saldo"
+                    >
+                      <ArrowDownLeft className="w-3.5 h-3.5" /> Resgate
                     </button>
                   </div>
 
-                  <button
-                    onClick={() => handleOpenCofrinhoModal(cof.id, 'transfer')}
-                    className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                  >
-                    <ArrowRightLeft className="w-3.5 h-3.5" /> Transferir
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleOpenCofrinhoModal(cof.id, 'transfer')}
+                      className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-0.5"
+                      title="Transferir entre cofrinhos"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5" /> Transferir
+                    </button>
+
+                    <span className="text-slate-300 dark:text-slate-700">|</span>
+
+                    <button
+                      onClick={() => handleOpenCofrinhoModal(cof.id, 'edit')}
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:underline flex items-center gap-0.5"
+                      title="Ajustar saldo e parâmetros"
+                    >
+                      <Settings2 className="w-3.5 h-3.5" /> Ajustar
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -855,7 +1269,7 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {cofrinhoMovements
             .filter((mov) => {
-              if (activeSubTab === 'emergency') return mov.cofrinhoId === 'cof-reserva';
+              if (activeSubTab === 'emergency') return mov.cofrinhoId === 'cof-reserva' || mov.cofrinhoId === 'cof-reserva-ellen';
               if (activeSubTab === 'extraordinary') return mov.isExtraordinaryShare;
               if (activeSubTab === 'cofrinhos') return true;
               return true;
@@ -896,11 +1310,6 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
                         {mov.isExtraordinaryShare && (
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-bold">
                             Renda Extra 70/20/10
-                          </span>
-                        )}
-                        {mov.isDemo && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-semibold">
-                            Demo
                           </span>
                         )}
                       </div>
@@ -944,6 +1353,7 @@ export const GoalsView: React.FC<GoalsViewProps> = ({
         onClose={() => setIsCofrinhoModalOpen(false)}
         defaultCofrinhoId={selectedCofrinhoIdForModal}
         initialMode={cofrinhoModalInitialMode}
+        initialMovType={cofrinhoModalInitialMovType}
       />
 
       <ExtraordinaryIncomeModal

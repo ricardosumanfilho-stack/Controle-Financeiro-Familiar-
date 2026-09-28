@@ -57,7 +57,19 @@ import { calculateMonthlyYieldDetails, calculateAnnualRate } from '../utils/yiel
 import { exportFullWorkbookExcel } from '../utils/excelExport';
 import { generateSmartShoppingListFromStock } from '../utils/stockReplenishment';
 import { createCarrefourMasterShoppingList } from '../data/carrefourMasterList';
-import { isSupabaseConfigured, pushLocalDataToSupabase } from '../services/supabase';
+import {
+  isSupabaseConfigured,
+  pushLocalDataToSupabase,
+  pullDataFromSupabase,
+  getSupabaseCredentials,
+  SUPABASE_STORAGE_KEYS,
+} from '../services/supabase';
+import {
+  VaultSnapshot,
+  saveVaultSnapshot,
+  getRestorePoints,
+  scanForRecoverableData,
+} from '../utils/vaultPersistence';
 
 export interface CardInvoiceSummary {
   card: CreditCard;
@@ -190,6 +202,8 @@ interface FinanceContextType {
 
   // Fechamento Mensal
   toggleClosingChecklistItem: (monthKey: string, itemId: string) => void;
+  uncheckAllClosingChecklistItems: (monthKey: string) => void;
+  checkAllClosingChecklistItems: (monthKey: string) => void;
   toggleMonthClosed: (monthKey: string) => void;
   updateClosingNotes: (monthKey: string, notes: string) => void;
 
@@ -253,6 +267,8 @@ interface FinanceContextType {
   getCardInvoicesForMonth: (monthKey: string) => CardInvoiceSummary[];
   cumulativeBalance: number;
   totalEmergencyFund: number;
+  ricardoEmergencyFund: number;
+  ellenEmergencyFund: number;
   renovationCreditTotal: number;
   renovationCredit: number;
 
@@ -262,12 +278,33 @@ interface FinanceContextType {
   toggleTheme: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
 
-  // Auto-save & Cloud Sync status
+  // Auto-save, Vault & Cloud Sync status
   saveStatus: AutoSaveStatus;
   lastSavedTime: string | null;
   lastSavedTimestamp: number | null;
   forceSaveNow: () => void;
   purgeWeekOldData: () => void;
+
+  // Vault Permanente & Pontos de Restauração
+  restorePoints: VaultSnapshot[];
+  recoverableSnapshot: VaultSnapshot | null;
+  recoveryBannerDismissed: boolean;
+  restoreFromSnapshot: (snap: VaultSnapshot) => boolean;
+  createManualRestorePoint: (label?: string) => Promise<boolean>;
+  dismissRecoveryBanner: () => void;
+
+  // Supabase Timer-based Sync & GitHub Integration
+  isSupabaseConnected: boolean;
+  supabaseAutoSyncEnabled: boolean;
+  setSupabaseAutoSyncEnabled: (enabled: boolean) => void;
+  supabaseSyncInterval: number; // Intervalo em segundos (ex: 30, 60, 120, 300)
+  setSupabaseSyncInterval: (seconds: number) => void;
+  supabaseNextSyncSeconds: number;
+  supabaseLastSyncTime: string | null;
+  supabaseSyncStatus: 'idle' | 'syncing' | 'success' | 'error';
+  supabaseSyncError: string | null;
+  syncWithSupabase: (direction?: 'both' | 'pull' | 'push') => Promise<{ success: boolean; message: string }>;
+  reconnectSupabase: () => void;
 
   // Export & Import
   exportBackupJSON: () => void;
@@ -337,44 +374,25 @@ export const KEYS_TO_PURGE_ON_EXPIRY = [
   STORAGE_KEYS.ACTIVE_TAB,
 ];
 
+// POLÍTICA DE SEGURANÇA: Dados financeiros do usuário NUNCA são apagados automaticamente.
+// Desativado permanentemente qualquer expiração por decurso de tempo.
 export const checkAndPurgeExpiredSavedData = (): boolean => {
-  try {
-    const rawTimestamp = localStorage.getItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP);
-    const now = Date.now();
-    if (!rawTimestamp) {
-      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, now.toString());
-      return false;
-    }
-
-    const lastSavedTime = Number(rawTimestamp);
-    if (isNaN(lastSavedTime) || lastSavedTime <= 0) {
-      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, now.toString());
-      return false;
-    }
-
-    const diff = now - lastSavedTime;
-
-    // Quando tiver uma diferença de 1 semana ou mais do salvamento atual (>= 7 dias), apagar dados antigos
-    if (diff >= ONE_WEEK_MS) {
-      console.warn(`[FinanceContext] Dados salvos possuem 1 semana ou mais de diferença (${(diff / (1000 * 60 * 60 * 24)).toFixed(1)} dias). Apagando salvamento antigo.`);
-      
-      KEYS_TO_PURGE_ON_EXPIRY.forEach((key) => {
-        try {
-          localStorage.removeItem(key);
-        } catch {}
-      });
-
-      localStorage.setItem(STORAGE_KEYS.LAST_SAVED_TIMESTAMP, now.toString());
-      return true;
-    }
-  } catch (err) {
-    console.error('Erro ao checar política de retenção de 1 semana:', err);
-  }
   return false;
 };
 
-// Executa antes da montagem inicial dos hooks do React
-checkAndPurgeExpiredSavedData();
+export function safeStorageGet<T>(key: string, defaultValue: T): T {
+  try {
+    const item = localStorage.getItem(key);
+    if (item === null || item === undefined) return defaultValue;
+    try {
+      return JSON.parse(item) as T;
+    } catch {
+      return item as unknown as T;
+    }
+  } catch {
+    return defaultValue;
+  }
+}
 
 export const safeStorageSet = (key: string, value: any) => {
   try {
@@ -542,6 +560,25 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     try {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0) {
+        // Garantir que a Reserva de Emergência da Ellen exista e que a do Ricardo esteja personalizada
+        const hasEllenReserva = parsed.some((c) => c.id === 'cof-reserva-ellen');
+        if (!hasEllenReserva) {
+          const ellenReserva = INITIAL_COFRINHOS.find((c) => c.id === 'cof-reserva-ellen');
+          if (ellenReserva) {
+            const updated = parsed.map((c: Cofrinho) => {
+              if (c.id === 'cof-reserva' && (c.name.includes('Ricardo & Ellen') || c.person === 'Família')) {
+                return {
+                  ...c,
+                  name: 'Reserva de Emergência - Ricardo',
+                  person: 'Ricardo',
+                  targetAmount: c.targetAmount === 55200 ? 42400 : c.targetAmount,
+                };
+              }
+              return c;
+            });
+            return [...updated, ellenReserva];
+          }
+        }
         return parsed;
       }
     } catch (e) {
@@ -771,6 +808,14 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   });
 
+  const [recoverableSnapshot, setRecoverableSnapshot] = useState<VaultSnapshot | null>(null);
+  const [restorePoints, setRestorePoints] = useState<VaultSnapshot[]>([]);
+  const [recoveryBannerDismissed, setRecoveryBannerDismissed] = useState(false);
+
+  const dismissRecoveryBanner = useCallback(() => {
+    setRecoveryBannerDismissed(true);
+  }, []);
+
   const notifySaved = useCallback((isCloud = false) => {
     const now = Date.now();
     setSaveStatus(isCloud ? 'synced_cloud' : 'saved');
@@ -901,10 +946,104 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     safeStorageSet(STORAGE_KEYS.DISMISSED_ALERTS, dismissedAlertIdsRef.current);
     safeStorageSet(STORAGE_KEYS.CUSTOM_CATEGORIES, customCategoriesRef.current);
 
+    // Salva simultaneamente no cofre permanente (IndexedDB + espelho redundante)
+    saveVaultSnapshot(
+      {
+        transactions: transactionsRef.current,
+        cards: cardsRef.current,
+        cardSubscriptions: cardSubscriptionsRef.current,
+        cofrinhos: cofrinhosRef.current,
+        cofrinhoMovements: cofrinhoMovementsRef.current,
+        installmentPurchases: installmentPurchasesRef.current,
+        groceryTrips: groceryTripsRef.current,
+        groceryPlan: groceryPlanRef.current,
+        groceryPlansByMonth: groceryPlansByMonthRef.current,
+        shoppingLists: shoppingListsRef.current,
+        stockItems: stockItemsRef.current,
+        cestaBasicaRecords: cestaBasicaRecordsRef.current,
+        salarySettings: salarySettingsRef.current,
+        investmentContributions: investmentContributionsRef.current,
+        emergencyContributions: emergencyContributionsRef.current,
+        emergencySettings: emergencySettingsRef.current,
+        globalCofrinhoSettings: globalCofrinhoSettingsRef.current,
+        houseFundSettings: houseFundSettingsRef.current,
+        renovationExpenses: renovationExpensesRef.current,
+        futureRentSettings: futureRentSettingsRef.current,
+        closingChecklists: closingChecklistsRef.current,
+        dismissedAlertIds: dismissedAlertIdsRef.current,
+        customCategories: customCategoriesRef.current,
+      },
+      'Salvamento Manual'
+    );
+
     notifySaved(isSupabaseConfigured());
   }, [notifySaved]);
 
+  const createManualRestorePoint = useCallback(async (label?: string) => {
+    const success = await saveVaultSnapshot(
+      {
+        transactions: transactionsRef.current,
+        cards: cardsRef.current,
+        cardSubscriptions: cardSubscriptionsRef.current,
+        cofrinhos: cofrinhosRef.current,
+        cofrinhoMovements: cofrinhoMovementsRef.current,
+        installmentPurchases: installmentPurchasesRef.current,
+        groceryTrips: groceryTripsRef.current,
+        groceryPlan: groceryPlanRef.current,
+        groceryPlansByMonth: groceryPlansByMonthRef.current,
+        shoppingLists: shoppingListsRef.current,
+        stockItems: stockItemsRef.current,
+        cestaBasicaRecords: cestaBasicaRecordsRef.current,
+        salarySettings: salarySettingsRef.current,
+        investmentContributions: investmentContributionsRef.current,
+        emergencyContributions: emergencyContributionsRef.current,
+        emergencySettings: emergencySettingsRef.current,
+        globalCofrinhoSettings: globalCofrinhoSettingsRef.current,
+        houseFundSettings: houseFundSettingsRef.current,
+        renovationExpenses: renovationExpensesRef.current,
+        futureRentSettings: futureRentSettingsRef.current,
+        closingChecklists: closingChecklistsRef.current,
+        dismissedAlertIds: dismissedAlertIdsRef.current,
+        customCategories: customCategoriesRef.current,
+      },
+      label || 'Ponto Manual Criado pelo Usuário'
+    );
+    const updated = await getRestorePoints();
+    setRestorePoints(updated);
+    return success;
+  }, []);
+
   const purgeWeekOldData = useCallback(() => {
+    // Antes de qualquer limpeza manual, salva um ponto de segurança no cofre permanente
+    saveVaultSnapshot(
+      {
+        transactions: transactionsRef.current,
+        cards: cardsRef.current,
+        cardSubscriptions: cardSubscriptionsRef.current,
+        cofrinhos: cofrinhosRef.current,
+        cofrinhoMovements: cofrinhoMovementsRef.current,
+        installmentPurchases: installmentPurchasesRef.current,
+        groceryTrips: groceryTripsRef.current,
+        groceryPlan: groceryPlanRef.current,
+        groceryPlansByMonth: groceryPlansByMonthRef.current,
+        shoppingLists: shoppingListsRef.current,
+        stockItems: stockItemsRef.current,
+        cestaBasicaRecords: cestaBasicaRecordsRef.current,
+        salarySettings: salarySettingsRef.current,
+        investmentContributions: investmentContributionsRef.current,
+        emergencyContributions: emergencyContributionsRef.current,
+        emergencySettings: emergencySettingsRef.current,
+        globalCofrinhoSettings: globalCofrinhoSettingsRef.current,
+        houseFundSettings: houseFundSettingsRef.current,
+        renovationExpenses: renovationExpensesRef.current,
+        futureRentSettings: futureRentSettingsRef.current,
+        closingChecklists: closingChecklistsRef.current,
+        dismissedAlertIds: dismissedAlertIdsRef.current,
+        customCategories: customCategoriesRef.current,
+      },
+      'Backup de Segurança Pré-Limpeza'
+    );
+
     KEYS_TO_PURGE_ON_EXPIRY.forEach((key) => {
       try {
         localStorage.removeItem(key);
@@ -945,30 +1084,65 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     notifySaved(false);
   }, [notifySaved]);
 
-  // Monitora retenção de 1 semana periodicamente e ao focar na página
+  // Escaneia pontos de recuperação no cofre permanente no carregamento
+  useEffect(() => {
+    const checkRecovery = async () => {
+      try {
+        const points = await getRestorePoints();
+        setRestorePoints(points);
+
+        const recoverable = await scanForRecoverableData();
+        if (recoverable && recoverable.data) {
+          const snapTxCount =
+            recoverable.transactionsCount ||
+            (Array.isArray(recoverable.data.transactions) ? recoverable.data.transactions.length : 0);
+          const currentTxCount = transactionsRef.current.length;
+          // Se o backup tem dados e difere do estado atual, disponibiliza aviso de recuperação
+          if (snapTxCount > 0 && snapTxCount !== currentTxCount) {
+            setRecoverableSnapshot(recoverable);
+          }
+        }
+      } catch (e) {
+        console.warn('[FinanceContext] Erro ao escanear pontos de recuperação:', e);
+      }
+    };
+    checkRecovery();
+  }, []);
+
+  // Salva snapshots de segurança no cofre perpétuo (IndexedDB + LocalStorage) a cada 5 minutos
   useEffect(() => {
     const interval = setInterval(() => {
-      const purged = checkAndPurgeExpiredSavedData();
-      if (purged) {
-        purgeWeekOldData();
+      if (transactionsRef.current.length > 0 || cardsRef.current.length > 0) {
+        saveVaultSnapshot({
+          transactions: transactionsRef.current,
+          cards: cardsRef.current,
+          cardSubscriptions: cardSubscriptionsRef.current,
+          cofrinhos: cofrinhosRef.current,
+          cofrinhoMovements: cofrinhoMovementsRef.current,
+          installmentPurchases: installmentPurchasesRef.current,
+          groceryTrips: groceryTripsRef.current,
+          groceryPlan: groceryPlanRef.current,
+          groceryPlansByMonth: groceryPlansByMonthRef.current,
+          shoppingLists: shoppingListsRef.current,
+          stockItems: stockItemsRef.current,
+          cestaBasicaRecords: cestaBasicaRecordsRef.current,
+          salarySettings: salarySettingsRef.current,
+          investmentContributions: investmentContributionsRef.current,
+          emergencyContributions: emergencyContributionsRef.current,
+          emergencySettings: emergencySettingsRef.current,
+          globalCofrinhoSettings: globalCofrinhoSettingsRef.current,
+          houseFundSettings: houseFundSettingsRef.current,
+          renovationExpenses: renovationExpensesRef.current,
+          futureRentSettings: futureRentSettingsRef.current,
+          closingChecklists: closingChecklistsRef.current,
+          dismissedAlertIds: dismissedAlertIdsRef.current,
+          customCategories: customCategoriesRef.current,
+        });
       }
-    }, 60 * 60 * 1000);
+    }, 5 * 60 * 1000);
 
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        const purged = checkAndPurgeExpiredSavedData();
-        if (purged) {
-          purgeWeekOldData();
-        }
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [purgeWeekOldData]);
+    return () => clearInterval(interval);
+  }, []);
 
   // Save to localStorage whenever state changes
   useEffect(() => {
@@ -1126,10 +1300,230 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
   }, [selectedMonth]);
 
-  // Automatic Background Cloud Sync to Supabase (if configured)
+  // Supabase State & Timer Sync Configurations
+  const [isSupabaseConnected, setIsSupabaseConnected] = useState<boolean>(() => isSupabaseConfigured());
+  const [supabaseAutoSyncEnabled, setSupabaseAutoSyncEnabledState] = useState<boolean>(() => {
+    const stored = safeStorageGet<boolean>(SUPABASE_STORAGE_KEYS.AUTO_SYNC_ENABLED, true);
+    return stored === true || stored === undefined;
+  });
+  const [supabaseSyncInterval, setSupabaseSyncIntervalState] = useState<number>(() => {
+    const stored = safeStorageGet(SUPABASE_STORAGE_KEYS.SYNC_INTERVAL, 60);
+    return typeof stored === 'number' && stored >= 10 ? stored : 60;
+  });
+  const [supabaseNextSyncSeconds, setSupabaseNextSyncSeconds] = useState<number>(() => {
+    const stored = safeStorageGet(SUPABASE_STORAGE_KEYS.SYNC_INTERVAL, 60);
+    return typeof stored === 'number' && stored >= 10 ? stored : 60;
+  });
+  const [supabaseLastSyncTime, setSupabaseLastSyncTime] = useState<string | null>(() => {
+    return safeStorageGet(SUPABASE_STORAGE_KEYS.LAST_SYNC_TIME, null);
+  });
+  const [supabaseSyncStatus, setSupabaseSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [supabaseSyncError, setSupabaseSyncError] = useState<string | null>(null);
+
+  const setSupabaseAutoSyncEnabled = useCallback((enabled: boolean) => {
+    setSupabaseAutoSyncEnabledState(enabled);
+    safeStorageSet(SUPABASE_STORAGE_KEYS.AUTO_SYNC_ENABLED, enabled);
+  }, []);
+
+  const setSupabaseSyncInterval = useCallback((seconds: number) => {
+    const validSeconds = Math.max(10, seconds);
+    setSupabaseSyncIntervalState(validSeconds);
+    setSupabaseNextSyncSeconds(validSeconds);
+    safeStorageSet(SUPABASE_STORAGE_KEYS.SYNC_INTERVAL, validSeconds);
+  }, []);
+
+  const reconnectSupabase = useCallback(() => {
+    const configured = isSupabaseConfigured();
+    setIsSupabaseConnected(configured);
+    if (configured) {
+      setSupabaseNextSyncSeconds(supabaseSyncInterval);
+    }
+  }, [supabaseSyncInterval]);
+
+  // Sincronização Bidirecional (Pull + Push) com o Supabase
+  const isSyncInProgressRef = useRef(false);
+  const syncWithSupabase = useCallback(async (direction: 'both' | 'pull' | 'push' = 'both'): Promise<{ success: boolean; message: string }> => {
+    if (!isSupabaseConfigured()) {
+      setIsSupabaseConnected(false);
+      return { success: false, message: 'Supabase não está configurado. Insira a URL e chave nas configurações.' };
+    }
+    setIsSupabaseConnected(true);
+
+    if (isSyncInProgressRef.current) {
+      return { success: false, message: 'Sincronização já em execução.' };
+    }
+
+    isSyncInProgressRef.current = true;
+    setSupabaseSyncStatus('syncing');
+    setSupabaseSyncError(null);
+
+    try {
+      // 1. PULL: Baixa as alterações mais recentes do Supabase (Nuvem -> Local)
+      if (direction === 'pull' || direction === 'both') {
+        const pullRes = await pullDataFromSupabase();
+        if (pullRes.success && pullRes.data) {
+          const d = pullRes.data;
+          if (d.cards && d.cards.length > 0) setCards(d.cards);
+          if (d.transactions && d.transactions.length > 0) setTransactions(d.transactions);
+          if (d.installmentPurchases && d.installmentPurchases.length > 0) setInstallmentPurchases(d.installmentPurchases);
+          if (d.cardSubscriptions && d.cardSubscriptions.length > 0) setCardSubscriptions(d.cardSubscriptions);
+          if (d.groceryTrips && d.groceryTrips.length > 0) setGroceryTrips(d.groceryTrips);
+          if (d.groceryMonthPlans && d.groceryMonthPlans.length > 0) {
+            const plansMap: Record<string, GroceryMonthPlan> = {};
+            d.groceryMonthPlans.forEach((p) => {
+              plansMap[p.monthKey] = p;
+            });
+            setGroceryPlansByMonth((prev) => ({ ...prev, ...plansMap }));
+            const curPlan = d.groceryMonthPlans.find((p) => p.monthKey === selectedMonth) || d.groceryMonthPlans[0];
+            if (curPlan) setGroceryPlan(curPlan);
+          }
+          if (d.shoppingLists && d.shoppingLists.length > 0) setShoppingLists(d.shoppingLists);
+          if (d.stockItems && d.stockItems.length > 0) setStockItems(d.stockItems);
+          if (d.cestaBasicaRecords && d.cestaBasicaRecords.length > 0) setCestaBasicaRecords(d.cestaBasicaRecords);
+          if (d.cofrinhos && d.cofrinhos.length > 0) setCofrinhos(d.cofrinhos);
+          if (d.cofrinhoMovements && d.cofrinhoMovements.length > 0) setCofrinhoMovements(d.cofrinhoMovements);
+          if (d.emergencyContributions && d.emergencyContributions.length > 0) setEmergencyContributions(d.emergencyContributions);
+          if (d.investmentContributions && d.investmentContributions.length > 0) setInvestmentContributions(d.investmentContributions);
+          if (d.renovationExpenses && d.renovationExpenses.length > 0) setRenovationExpenses(d.renovationExpenses);
+          if (d.closingChecklists && d.closingChecklists.length > 0) setClosingChecklists(d.closingChecklists);
+          if (d.salarySettings) setSalarySettings(d.salarySettings);
+          if (d.emergencySettings) setEmergencySettings(d.emergencySettings);
+          if (d.houseFundSettings) setHouseFundSettings(d.houseFundSettings);
+          if (d.futureRentSettings) setFutureRentSettings(d.futureRentSettings);
+          if (d.globalCofrinhoSettings) setGlobalCofrinhoSettings(d.globalCofrinhoSettings);
+        } else if (!pullRes.success && direction === 'pull') {
+          throw new Error(pullRes.message);
+        }
+      }
+
+      // 2. PUSH: Envia o estado atual para o Supabase (Local -> Nuvem)
+      if (direction === 'push' || direction === 'both') {
+        const checklistsMap: Record<string, any> = {};
+        closingChecklists.forEach((c) => {
+          checklistsMap[c.monthKey] = c;
+        });
+
+        const allPlans = Object.values(groceryPlansByMonth);
+        const pushRes = await pushLocalDataToSupabase({
+          cards,
+          transactions,
+          installmentPurchases,
+          cardSubscriptions,
+          groceryTrips,
+          groceryMonthPlans: allPlans.length > 0 ? allPlans : [groceryPlan],
+          shoppingLists,
+          stockItems,
+          cestaBasicaRecords,
+          cofrinhos,
+          cofrinhoMovements,
+          emergencyContributions,
+          investmentContributions,
+          renovationExpenses,
+          monthlyClosingChecklists: checklistsMap,
+          salarySettings,
+          emergencySettings,
+          houseFundSettings,
+          futureRentSettings,
+          globalCofrinhoSettings,
+        });
+
+        if (!pushRes.success && direction === 'push') {
+          throw new Error(pushRes.message);
+        }
+      }
+
+      const nowTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setSupabaseLastSyncTime(nowTime);
+      setSupabaseSyncStatus('success');
+      setSupabaseNextSyncSeconds(supabaseSyncInterval);
+      safeStorageSet(SUPABASE_STORAGE_KEYS.LAST_SYNC_TIME, nowTime);
+      safeStorageSet(SUPABASE_STORAGE_KEYS.LAST_SYNC_STATUS, 'success');
+      setSaveStatus('synced_cloud');
+
+      return { success: true, message: `Sincronizado com sucesso às ${nowTime}` };
+    } catch (err: any) {
+      const errMsg = err?.message || 'Falha durante a sincronização com Supabase';
+      setSupabaseSyncStatus('error');
+      setSupabaseSyncError(errMsg);
+      safeStorageSet(SUPABASE_STORAGE_KEYS.LAST_SYNC_STATUS, 'error');
+      return { success: false, message: errMsg };
+    } finally {
+      isSyncInProgressRef.current = false;
+    }
+  }, [
+    cards,
+    transactions,
+    installmentPurchases,
+    cardSubscriptions,
+    groceryTrips,
+    groceryPlan,
+    groceryPlansByMonth,
+    shoppingLists,
+    stockItems,
+    cestaBasicaRecords,
+    cofrinhos,
+    cofrinhoMovements,
+    emergencyContributions,
+    investmentContributions,
+    renovationExpenses,
+    closingChecklists,
+    salarySettings,
+    emergencySettings,
+    houseFundSettings,
+    futureRentSettings,
+    globalCofrinhoSettings,
+    selectedMonth,
+    supabaseSyncInterval,
+  ]);
+
+  // Timer periódio de Sincronização Contínua (Supabase Polling Timer)
+  useEffect(() => {
+    if (!supabaseAutoSyncEnabled || !isSupabaseConnected) return;
+
+    const timer = setInterval(() => {
+      setSupabaseNextSyncSeconds((prev) => {
+        if (prev <= 1) {
+          syncWithSupabase('both');
+          return supabaseSyncInterval;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [supabaseAutoSyncEnabled, isSupabaseConnected, supabaseSyncInterval, syncWithSupabase]);
+
+  // Listener para foco da janela / troca de aba do navegador
+  // Quando o usuário volta para esta aba vindo do GitHub ou de outro dispositivo, sincroniza imediatamente!
+  useEffect(() => {
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' && supabaseAutoSyncEnabled && isSupabaseConfigured()) {
+        syncWithSupabase('both');
+      }
+    };
+    window.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
+  }, [supabaseAutoSyncEnabled, syncWithSupabase]);
+
+  // Sincronização inicial ao carregar a aplicação
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      setIsSupabaseConnected(true);
+      // Pequeno timeout para permitir que a UI inicialize
+      const initialTimer = setTimeout(() => {
+        syncWithSupabase('both');
+      }, 500);
+      return () => clearTimeout(initialTimer);
+    }
+  }, []);
+
+  // Automatic Debounced Push on Local Edits (se configurado, envia alterações locais em 2s)
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   useEffect(() => {
-    // Notify local save immediately
     notifySaved(false);
 
     if (!isSupabaseConfigured()) {
@@ -1172,6 +1566,9 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
         if (res.success) {
           notifySaved(true);
+          const nowTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          setSupabaseLastSyncTime(nowTime);
+          setSupabaseSyncStatus('success');
         } else {
           notifySaved(false);
         }
@@ -1179,7 +1576,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         console.warn('Auto-sync Supabase skipped:', e);
         notifySaved(false);
       }
-    }, 2000);
+    }, 2500);
 
     return () => {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -2477,8 +2874,13 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     // Add to Cofrinho Reserva as well if not already passed with cofrinhoMovementId
     let createdMovId = efc.cofrinhoMovementId;
     if (!createdMovId) {
+      const targetCofId =
+        efc.person === 'Ellen' || efc.institution?.toLowerCase().includes('ellen')
+          ? 'cof-reserva-ellen'
+          : 'cof-reserva';
+
       const mov = addCofrinhoMovement({
-        cofrinhoId: 'cof-reserva',
+        cofrinhoId: targetCofId,
         date: efc.date,
         type: 'aporte',
         amount: efc.amount,
@@ -2513,12 +2915,26 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     setEmergencySettings((prev) => ({ ...prev, ...updated }));
   };
 
-  // Total Emergency Fund Balance
+  // Total Emergency Fund Balance (soma consolidada de todas as reservas)
   const totalEmergencyFund = useMemo(() => {
-    const resCof = cofrinhos.find((c) => c.type === 'reserva');
-    if (resCof) return resCof.currentBalance;
+    const reservaCofs = cofrinhos.filter((c) => c.type === 'reserva');
+    if (reservaCofs.length > 0) {
+      return reservaCofs.reduce((acc, c) => acc + (c.currentBalance || 0), 0);
+    }
     return emergencyContributions.reduce((acc, e) => acc + e.amount, 0);
   }, [cofrinhos, emergencyContributions]);
+
+  // Reserva individual do Ricardo
+  const ricardoEmergencyFund = useMemo(() => {
+    const cof = cofrinhos.find((c) => c.id === 'cof-reserva' || (c.type === 'reserva' && c.person === 'Ricardo'));
+    return cof ? cof.currentBalance : 0;
+  }, [cofrinhos]);
+
+  // Reserva individual da Ellen
+  const ellenEmergencyFund = useMemo(() => {
+    const cof = cofrinhos.find((c) => c.id === 'cof-reserva-ellen' || (c.type === 'reserva' && c.person === 'Ellen'));
+    return cof ? cof.currentBalance : 0;
+  }, [cofrinhos]);
 
   // Credit Card Invoices per Month
   const getCardInvoicesForMonth = useCallback((monthKey: string): CardInvoiceSummary[] => {
@@ -2604,10 +3020,26 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const incomeByPerson: Record<Person, number> = { Ricardo: 0, Ellen: 0, Família: 0 };
     const expenseByPerson: Record<Person, number> = { Ricardo: 0, Ellen: 0, Família: 0 };
+    const transfersSentByPerson: Record<Person, number> = { Ricardo: 0, Ellen: 0, Família: 0 };
+    const transfersReceivedAsExtraByPerson: Record<Person, number> = { Ricardo: 0, Ellen: 0, Família: 0 };
 
     monthTxs.forEach((t) => {
-      // Transferências internas NÃO são receitas nem despesas
+      // Transferências
       if (t.type === 'transferencia') {
+        if (t.isExternalTransfer || t.transferType === 'externa') {
+          // Transferência externa recebida é contabilizada como receita
+          extraordinaryIncome += t.amount;
+          incomeByPerson[t.person] = (incomeByPerson[t.person] || 0) + t.amount;
+        } else {
+          // Transferência entre Ricardo e Ellen (ou entre usuários):
+          // "tem que ser considera a inclusao no saldo da pessoa que esta recebendo a transferencia como extra.
+          //  E nao pode ser somada a receita pois esta saindo de um e indo para outro, so se for recebida uma transferencia externa. Entre os usuarios nao."
+          const sender = t.person;
+          const recipient = t.destinationPerson || (sender === 'Ricardo' ? 'Ellen' : 'Ricardo');
+
+          transfersSentByPerson[sender] = (transfersSentByPerson[sender] || 0) + t.amount;
+          transfersReceivedAsExtraByPerson[recipient] = (transfersReceivedAsExtraByPerson[recipient] || 0) + t.amount;
+        }
         return;
       }
 
@@ -2769,6 +3201,21 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       cofrinhoAccumulatedYield,
       incomeByPerson,
       expenseByPerson,
+      transfersSentByPerson,
+      transfersReceivedAsExtraByPerson,
+      netBalanceByPerson: {
+        Ricardo:
+          (incomeByPerson['Ricardo'] || 0) +
+          (transfersReceivedAsExtraByPerson['Ricardo'] || 0) -
+          (expenseByPerson['Ricardo'] || 0) -
+          (transfersSentByPerson['Ricardo'] || 0),
+        Ellen:
+          (incomeByPerson['Ellen'] || 0) +
+          (transfersReceivedAsExtraByPerson['Ellen'] || 0) -
+          (expenseByPerson['Ellen'] || 0) -
+          (transfersSentByPerson['Ellen'] || 0),
+        Família: (incomeByPerson['Família'] || 0) - (expenseByPerson['Família'] || 0),
+      },
     };
   }, [
     transactions,
@@ -2816,29 +3263,78 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     setClosingChecklists((prev) => {
       const existing = prev.find((c) => c.monthKey === monthKey);
       if (!existing) {
-        const initialChecks = INITIAL_CLOSING_CHECKLISTS[0]?.checkedItems || {};
         return [
           ...prev,
           {
             monthKey,
             isClosed: false,
             checkedItems: {
-              ...initialChecks,
-              [itemId]: !initialChecks[itemId],
+              [itemId]: true,
             },
           },
         ];
       }
       return prev.map((c) => {
         if (c.monthKey !== monthKey) return c;
+        const currentChecked = c.checkedItems || {};
         return {
           ...c,
           checkedItems: {
-            ...c.checkedItems,
-            [itemId]: !c.checkedItems[itemId],
+            ...currentChecked,
+            [itemId]: !currentChecked[itemId],
           },
         };
       });
+    });
+  };
+
+  const uncheckAllClosingChecklistItems = (monthKey: string) => {
+    setClosingChecklists((prev) => {
+      const existing = prev.find((c) => c.monthKey === monthKey);
+      if (!existing) {
+        return [
+          ...prev,
+          {
+            monthKey,
+            isClosed: false,
+            checkedItems: {},
+          },
+        ];
+      }
+      return prev.map((c) => (c.monthKey === monthKey ? { ...c, checkedItems: {} } : c));
+    });
+  };
+
+  const checkAllClosingChecklistItems = (monthKey: string) => {
+    setClosingChecklists((prev) => {
+      const allCheckedMap: Record<string, boolean> = {
+        salario_ricardo: true,
+        salario_ellen: true,
+        rendas_extraordinarias: true,
+        reserva_ricardo_500: true,
+        reserva_ellen_500: true,
+        fatura_ricardo: true,
+        fatura_ellen: true,
+        parcelas_futuras: true,
+        supermercado_ricardo_semanal: true,
+        supermercado_ellen_mensal: true,
+        compras_supermercado_detalhadas: true,
+        rendimentos_cofrinhos: true,
+        credito_reforma: true,
+        saldos_bancarios: true,
+      };
+      const existing = prev.find((c) => c.monthKey === monthKey);
+      if (!existing) {
+        return [
+          ...prev,
+          {
+            monthKey,
+            isClosed: false,
+            checkedItems: allCheckedMap,
+          },
+        ];
+      }
+      return prev.map((c) => (c.monthKey === monthKey ? { ...c, checkedItems: allCheckedMap } : c));
     });
   };
 
@@ -2846,14 +3342,13 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     setClosingChecklists((prev) => {
       const existing = prev.find((c) => c.monthKey === monthKey);
       if (!existing) {
-        const initialChecks = INITIAL_CLOSING_CHECKLISTS[0]?.checkedItems || {};
         return [
           ...prev,
           {
             monthKey,
             isClosed: true,
             closedAt: new Date().toISOString(),
-            checkedItems: initialChecks,
+            checkedItems: {},
           },
         ];
       }
@@ -2873,14 +3368,13 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     setClosingChecklists((prev) => {
       const existing = prev.find((c) => c.monthKey === monthKey);
       if (!existing) {
-        const initialChecks = INITIAL_CLOSING_CHECKLISTS[0]?.checkedItems || {};
         return [
           ...prev,
           {
             monthKey,
             isClosed: false,
             notes,
-            checkedItems: initialChecks,
+            checkedItems: {},
           },
         ];
       }
@@ -3080,7 +3574,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Total Cumulative Balance (all recorded history excluding internal transfers)
   const cumulativeBalance = useMemo(() => {
     return transactions.reduce((acc, t) => {
-      if (t.type === 'transferencia') return acc;
+      if (t.type === 'transferencia') {
+        if (t.isExternalTransfer || t.transferType === 'externa') {
+          return acc + t.amount;
+        }
+        return acc;
+      }
       if (t.type === 'receita' || t.type === 'rendimento') return acc + t.amount;
       return acc - t.amount;
     }, 0);
@@ -3127,7 +3626,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   const importBackupJSON = (jsonString: string): boolean => {
     try {
       const parsed = JSON.parse(jsonString);
-      const ensureUniqueIds = <T extends { id?: string }>(arr: T[], prefix: string): T[] => {
+      function ensureUniqueIds<T extends { id?: string }>(arr: T[], prefix: string): T[] {
         const seen = new Set<string>();
         return arr.map((item, idx) => {
           if (!item.id || seen.has(item.id)) {
@@ -3138,7 +3637,7 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           seen.add(item.id);
           return item;
         });
-      };
+      }
 
       if (parsed.transactions && Array.isArray(parsed.transactions)) {
         setTransactions(ensureUniqueIds(parsed.transactions, 'tx'));
@@ -3212,6 +3711,20 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       return false;
     }
   };
+
+  const restoreFromSnapshot = useCallback(
+    (snapshot: VaultSnapshot): boolean => {
+      if (!snapshot || !snapshot.data) return false;
+      const ok = importBackupJSON(JSON.stringify(snapshot.data));
+      if (ok) {
+        setRecoverableSnapshot(null);
+        setRecoveryBannerDismissed(true);
+        forceSaveNow();
+      }
+      return ok;
+    },
+    [forceSaveNow]
+  );
 
   const exportTransactionsCSV = () => {
     const headers = [
@@ -3344,6 +3857,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         deleteRenovationExpense,
         updateFutureRentSettings,
         toggleClosingChecklistItem,
+        uncheckAllClosingChecklistItems,
+        checkAllClosingChecklistItems,
         toggleMonthClosed,
         updateClosingNotes,
         dismissAlert,
@@ -3385,6 +3900,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         getCardInvoicesForMonth,
         cumulativeBalance,
         totalEmergencyFund,
+        ricardoEmergencyFund,
+        ellenEmergencyFund,
         renovationCreditTotal,
         renovationCredit: renovationCreditTotal,
         theme,
@@ -3396,6 +3913,23 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         lastSavedTimestamp,
         forceSaveNow,
         purgeWeekOldData,
+        restorePoints,
+        recoverableSnapshot,
+        recoveryBannerDismissed,
+        restoreFromSnapshot,
+        createManualRestorePoint,
+        dismissRecoveryBanner,
+        isSupabaseConnected,
+        supabaseAutoSyncEnabled,
+        setSupabaseAutoSyncEnabled,
+        supabaseSyncInterval,
+        setSupabaseSyncInterval,
+        supabaseNextSyncSeconds,
+        supabaseLastSyncTime,
+        supabaseSyncStatus,
+        supabaseSyncError,
+        syncWithSupabase,
+        reconnectSupabase,
         exportBackupJSON,
         importBackupJSON,
         exportTransactionsCSV,

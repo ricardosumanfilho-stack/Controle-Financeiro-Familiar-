@@ -123,6 +123,8 @@ export const MonthlyClosingView: React.FC<MonthlyClosingViewProps> = ({ onOpenGo
     selectedMonth,
     closingChecklists,
     toggleClosingChecklistItem,
+    uncheckAllClosingChecklistItems,
+    checkAllClosingChecklistItems,
     toggleMonthClosed,
     updateClosingNotes,
     currentMonthSummary,
@@ -292,14 +294,37 @@ export const MonthlyClosingView: React.FC<MonthlyClosingViewProps> = ({ onOpenGo
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Checklist Operacional (2 Colunas) */}
         <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <CheckSquare className="w-5 h-5 text-blue-600" />
-              Checklist de Tarefas & Conferências
-            </h3>
-            <span className="text-xs text-slate-500 font-medium">
-              Clique no item para marcar/desmarcar
-            </span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <CheckSquare className="w-5 h-5 text-blue-600" />
+                Checklist de Tarefas & Conferências
+              </h3>
+              <span className="text-xs text-slate-500 font-medium">
+                Cada item funciona individualmente. Clique no quadrado para marcar ou desmarcar.
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => uncheckAllClosingChecklistItems(selectedMonth)}
+                className="px-2.5 py-1 text-xs font-semibold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors flex items-center gap-1.5"
+                title="Desmarcar todas as caixas de seleção deste mês"
+              >
+                <Square className="w-3.5 h-3.5" />
+                Desmarcar Todos
+              </button>
+              <button
+                type="button"
+                onClick={() => checkAllClosingChecklistItems(selectedMonth)}
+                className="px-2.5 py-1 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-lg transition-colors flex items-center gap-1.5"
+                title="Marcar todas as tarefas como concluídas"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                Marcar Todos
+              </button>
+            </div>
           </div>
 
           <div className="space-y-6">
@@ -312,27 +337,40 @@ export const MonthlyClosingView: React.FC<MonthlyClosingViewProps> = ({ onOpenGo
                   </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {itemsInCat.map((item) => {
-                      const isChecked = !!currentChecklist.checkedItems[item.id];
+                      const isChecked = !!currentChecklist.checkedItems?.[item.id];
                       return (
                         <div
                           key={item.id}
-                          onClick={() => toggleClosingChecklistItem(selectedMonth, item.id)}
-                          className={`cursor-pointer flex items-start gap-3 p-3 rounded-xl border transition-all ${
+                          role="checkbox"
+                          aria-checked={isChecked}
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === ' ' || e.key === 'Enter') {
+                              e.preventDefault();
+                              toggleClosingChecklistItem(selectedMonth, item.id);
+                            }
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleClosingChecklistItem(selectedMonth, item.id);
+                          }}
+                          className={`cursor-pointer select-none flex items-start gap-3 p-3 rounded-xl border transition-all ${
                             isChecked
-                              ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800/60'
-                              : 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/70 hover:border-slate-300'
+                              ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800/60 shadow-2xs'
+                              : 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/70 hover:border-slate-300 dark:hover:border-slate-600'
                           }`}
                         >
                           <div className="mt-0.5 shrink-0">
                             {isChecked ? (
-                              <CheckSquare className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                              <CheckSquare className="w-5 h-5 text-emerald-600 dark:text-emerald-400 transition-transform active:scale-90" />
                             ) : (
-                              <Square className="w-5 h-5 text-slate-400 hover:text-slate-600" />
+                              <Square className="w-5 h-5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-transform active:scale-90" />
                             )}
                           </div>
                           <div className="space-y-0.5 flex-1">
                             <div
-                              className={`text-xs font-bold leading-tight ${
+                              className={`text-xs font-bold leading-tight transition-colors ${
                                 isChecked
                                   ? 'text-emerald-900 dark:text-emerald-300 line-through opacity-80'
                                   : 'text-slate-900 dark:text-slate-100'

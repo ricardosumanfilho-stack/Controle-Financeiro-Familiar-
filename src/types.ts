@@ -167,6 +167,12 @@ export interface Transaction {
   cofrinhoId?: string;
   investmentContributionId?: string;
   emergencyContributionId?: string;
+  transferType?: 'entre_usuarios' | 'externa';
+  destinationPerson?: Person;
+  isExternalTransfer?: boolean;
+  externalOrigin?: string;
+  brokerage?: string;
+  isSentToBrokerage?: boolean;
 }
 
 export interface CreditCard {
@@ -316,6 +322,7 @@ export interface InvestmentContribution {
   person: 'Ricardo' | 'Ellen';
   amount: number;
   targetAsset: string;
+  brokerage?: string;
   status?: MonthlyAporteStatus;
   transactionId?: string;
   cofrinhoMovementId?: string;
@@ -436,6 +443,9 @@ export interface MonthSummary {
   // Totais por Responsável
   incomeByPerson: Record<Person, number>;
   expenseByPerson: Record<Person, number>;
+  transfersSentByPerson?: Record<Person, number>;
+  transfersReceivedAsExtraByPerson?: Record<Person, number>;
+  netBalanceByPerson?: Record<Person, number>;
 }
 
 export interface HouseFundSettings {

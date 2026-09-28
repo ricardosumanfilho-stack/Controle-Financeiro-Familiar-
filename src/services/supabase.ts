@@ -22,29 +22,163 @@ import {
   GlobalCofrinhoSettings,
 } from '../types';
 
-// Environment variables
-const env = (import.meta as any).env || {};
-const supabaseUrl = env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY as string | undefined;
+// Storage keys for custom/persistent Supabase configuration and sync timers
+export const SUPABASE_STORAGE_KEYS = {
+  URL: 'fin_supabase_url',
+  ANON_KEY: 'fin_supabase_anon_key',
+  SYNC_INTERVAL: 'fin_supabase_sync_interval',
+  AUTO_SYNC_ENABLED: 'fin_supabase_auto_sync_enabled',
+  LAST_SYNC_TIME: 'fin_supabase_last_sync_time',
+  LAST_SYNC_STATUS: 'fin_supabase_last_sync_status',
+};
+
+// Check if credentials exist in URL search parameters (?supabase_url=...&supabase_anon_key=...)
+export const parseCredentialsFromUrl = (): { url?: string; anonKey?: string } | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const url = params.get('supabase_url');
+    const anonKey = params.get('supabase_anon_key');
+    if (url && anonKey) {
+      return { url: url.trim(), anonKey: anonKey.trim() };
+    }
+  } catch {
+    // Ignore URL parse error
+  }
+  return null;
+};
 
 let clientInstance: SupabaseClient | null = null;
 
+export const getSupabaseCredentials = (): {
+  url: string;
+  anonKey: string;
+  isConfigured: boolean;
+  source: 'url' | 'storage' | 'env' | 'none';
+} => {
+  // 1. URL search params (e.g. instant access from GitHub shared link)
+  const fromUrl = parseCredentialsFromUrl();
+  if (fromUrl?.url && fromUrl?.anonKey && fromUrl.url.startsWith('https://') && fromUrl.anonKey.length > 10) {
+    try {
+      localStorage.setItem(SUPABASE_STORAGE_KEYS.URL, fromUrl.url);
+      localStorage.setItem(SUPABASE_STORAGE_KEYS.ANON_KEY, fromUrl.anonKey);
+    } catch {}
+    return {
+      url: fromUrl.url,
+      anonKey: fromUrl.anonKey,
+      isConfigured: true,
+      source: 'url',
+    };
+  }
+
+  // 2. LocalStorage (custom configured in-app)
+  if (typeof window !== 'undefined') {
+    try {
+      const storedUrl = localStorage.getItem(SUPABASE_STORAGE_KEYS.URL) || '';
+      const storedKey = localStorage.getItem(SUPABASE_STORAGE_KEYS.ANON_KEY) || '';
+      if (storedUrl.trim().startsWith('https://') && storedKey.trim().length > 10) {
+        return {
+          url: storedUrl.trim(),
+          anonKey: storedKey.trim(),
+          isConfigured: true,
+          source: 'storage',
+        };
+      }
+    } catch {}
+  }
+
+  // 3. Environment variables (Vite / AI Studio injected)
+  const env = (import.meta as any).env || {};
+  const envUrl = (env.VITE_SUPABASE_URL as string | undefined)?.trim();
+  const envKey = (env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
+
+  if (envUrl && envKey && envUrl.startsWith('https://') && envKey.length > 10) {
+    return {
+      url: envUrl,
+      anonKey: envKey,
+      isConfigured: true,
+      source: 'env',
+    };
+  }
+
+  return {
+    url: '',
+    anonKey: '',
+    isConfigured: false,
+    source: 'none',
+  };
+};
+
+export const setSupabaseCredentials = (url: string, anonKey: string): boolean => {
+  try {
+    const trimmedUrl = url.trim();
+    const trimmedKey = anonKey.trim();
+    if (!trimmedUrl.startsWith('https://') || trimmedKey.length < 10) {
+      return false;
+    }
+    localStorage.setItem(SUPABASE_STORAGE_KEYS.URL, trimmedUrl);
+    localStorage.setItem(SUPABASE_STORAGE_KEYS.ANON_KEY, trimmedKey);
+    clientInstance = null; // Re-create client with new credentials
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const clearSupabaseCredentials = (): void => {
+  try {
+    localStorage.removeItem(SUPABASE_STORAGE_KEYS.URL);
+    localStorage.removeItem(SUPABASE_STORAGE_KEYS.ANON_KEY);
+    clientInstance = null;
+  } catch {}
+};
+
 export const isSupabaseConfigured = (): boolean => {
-  return Boolean(
-    supabaseUrl &&
-    supabaseAnonKey &&
-    supabaseUrl.trim().length > 0 &&
-    supabaseAnonKey.trim().length > 0 &&
-    supabaseUrl.startsWith('https://')
-  );
+  return getSupabaseCredentials().isConfigured;
 };
 
 export const getSupabaseClient = (): SupabaseClient | null => {
-  if (!isSupabaseConfigured()) return null;
-  if (!clientInstance && supabaseUrl && supabaseAnonKey) {
-    clientInstance = createClient(supabaseUrl.trim(), supabaseAnonKey.trim());
+  const creds = getSupabaseCredentials();
+  if (!creds.isConfigured) return null;
+
+  if (!clientInstance) {
+    clientInstance = createClient(creds.url, creds.anonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
   }
   return clientInstance;
+};
+
+/**
+ * Gera a URL configurada com credenciais para abrir no GitHub ou qualquer outro link
+ */
+export const generateGitHubDirectUrl = (baseUrl?: string): string => {
+  const creds = getSupabaseCredentials();
+  if (!creds.isConfigured) return '';
+  const target = baseUrl?.trim() || (typeof window !== 'undefined' ? window.location.origin + window.location.pathname : '');
+  try {
+    const url = new URL(target);
+    url.searchParams.set('supabase_url', creds.url);
+    url.searchParams.set('supabase_anon_key', creds.anonKey);
+    return url.toString();
+  } catch {
+    return `${target}?supabase_url=${encodeURIComponent(creds.url)}&supabase_anon_key=${encodeURIComponent(creds.anonKey)}`;
+  }
+};
+
+/**
+ * Gera o conteúdo do arquivo .env pronto para download
+ */
+export const generateEnvFileContent = (): string => {
+  const creds = getSupabaseCredentials();
+  return `# GESTAO FINANCEIRA FAMILIAR - CONFIGURACAO SUPABASE
+# Coloque este arquivo na raiz do seu repositorio GitHub como .env ou adicione como Secrets no GitHub
+VITE_SUPABASE_URL=${creds.url || 'https://seu-projeto.supabase.co'}
+VITE_SUPABASE_ANON_KEY=${creds.anonKey || 'sua-chave-anon-publica'}
+`;
 };
 
 /**
@@ -362,6 +496,115 @@ export const pushLocalDataToSupabase = async (payload: {
       details.renovationExpenses = renRows.length;
     }
 
+    // 11. Shopping Lists
+    if (payload.shoppingLists && payload.shoppingLists.length > 0) {
+      const listRows = payload.shoppingLists.map((l) => ({
+        id: l.id,
+        name: l.name,
+        type: l.type || 'semanal',
+        month_key: l.monthKey,
+        items: l.items || [],
+        estimated_total: l.estimatedTotal || 0,
+        is_demo: Boolean(l.isDemo),
+      }));
+      const { error } = await client.from('shopping_lists').upsert(listRows);
+      if (error) throw new Error(`shopping_lists: ${error.message}`);
+      details.shoppingLists = listRows.length;
+    }
+
+    // 12. Stock Items
+    if (payload.stockItems && payload.stockItems.length > 0) {
+      const stockRows = payload.stockItems.map((s) => ({
+        id: s.id,
+        product: s.product,
+        category: s.category,
+        category_group: s.categoryGroup || null,
+        last_purchase_date: s.lastPurchaseDate || null,
+        quantity: s.quantity,
+        unit: s.unit || 'un',
+        estimated_duration_days: s.estimatedDurationDays || 30,
+        next_purchase_predicted_date: s.nextPurchasePredictedDate || null,
+        last_price_paid: s.lastPricePaid || null,
+        store: s.store || 'Supermercado',
+        status: s.status || 'suficiente',
+        is_from_cesta_basica: Boolean(s.isFromCestaBasica),
+        notes: s.notes || null,
+        is_demo: Boolean(s.isDemo),
+      }));
+      const { error } = await client.from('stock_items').upsert(stockRows);
+      if (error) throw new Error(`stock_items: ${error.message}`);
+      details.stockItems = stockRows.length;
+    }
+
+    // 13. Cesta Basica Records
+    if (payload.cestaBasicaRecords && payload.cestaBasicaRecords.length > 0) {
+      const cestaRows = payload.cestaBasicaRecords.map((cb) => ({
+        id: cb.id,
+        date: cb.date,
+        received_by: cb.receivedBy || 'Ellen',
+        estimated_savings: cb.estimatedSavings || 250,
+        items: cb.items || [],
+        notes: cb.notes || null,
+        is_demo: Boolean(cb.isDemo),
+      }));
+      const { error } = await client.from('cesta_basica_records').upsert(cestaRows);
+      if (error) throw new Error(`cesta_basica_records: ${error.message}`);
+      details.cestaBasicaRecords = cestaRows.length;
+    }
+
+    // 14. Emergency Fund Contributions
+    if (payload.emergencyContributions && payload.emergencyContributions.length > 0) {
+      const emerRows = payload.emergencyContributions.map((ec) => ({
+        id: ec.id,
+        date: ec.date,
+        person: ec.person,
+        amount: ec.amount,
+        institution: ec.institution,
+        is_extraordinary: Boolean(ec.isExtraordinary),
+        status: ec.status || 'realizado',
+        transaction_id: ec.transactionId || null,
+        cofrinho_movement_id: ec.cofrinhoMovementId || null,
+        notes: ec.notes || null,
+        is_demo: Boolean(ec.isDemo),
+      }));
+      const { error } = await client.from('emergency_contributions').upsert(emerRows);
+      if (error) throw new Error(`emergency_contributions: ${error.message}`);
+      details.emergencyContributions = emerRows.length;
+    }
+
+    // 15. Investment Contributions
+    if (payload.investmentContributions && payload.investmentContributions.length > 0) {
+      const invRows = payload.investmentContributions.map((ic) => ({
+        id: ic.id,
+        date: ic.date,
+        person: ic.person,
+        amount: ic.amount,
+        target_asset: ic.targetAsset || 'Tesouro Direto / FIIs',
+        status: ic.status || 'realizado',
+        transaction_id: ic.transactionId || null,
+        cofrinho_movement_id: ic.cofrinhoMovementId || null,
+        notes: ic.notes || null,
+        is_demo: Boolean(ic.isDemo),
+      }));
+      const { error } = await client.from('investment_contributions').upsert(invRows);
+      if (error) throw new Error(`investment_contributions: ${error.message}`);
+      details.investmentContributions = invRows.length;
+    }
+
+    // 16. Monthly Closing Checklists
+    if (payload.monthlyClosingChecklists && Object.keys(payload.monthlyClosingChecklists).length > 0) {
+      const checkRows = Object.values(payload.monthlyClosingChecklists).map((mc) => ({
+        month_key: mc.monthKey,
+        checked_items: mc.checkedItems || {},
+        is_closed: Boolean(mc.isClosed),
+        closed_at: mc.closedAt || null,
+        notes: mc.notes || null,
+      }));
+      const { error } = await client.from('monthly_closing_checklists').upsert(checkRows);
+      if (error) throw new Error(`monthly_closing_checklists: ${error.message}`);
+      details.monthlyClosingChecklists = checkRows.length;
+    }
+
     return {
       success: true,
       message: 'Sincronização com o Supabase concluída com sucesso!',
@@ -389,9 +632,15 @@ export const pullDataFromSupabase = async (): Promise<{
     cardSubscriptions: CardSubscription[];
     groceryTrips: GroceryTrip[];
     groceryMonthPlans: GroceryMonthPlan[];
+    shoppingLists: ShoppingList[];
+    stockItems: StockItem[];
+    cestaBasicaRecords: CestaBasicaRecord[];
     cofrinhos: Cofrinho[];
     cofrinhoMovements: CofrinhoMovement[];
+    emergencyContributions: EmergencyFundContribution[];
+    investmentContributions: InvestmentContribution[];
     renovationExpenses: RenovationExpense[];
+    closingChecklists: MonthlyClosingChecklist[];
     salarySettings: SalarySettings;
     emergencySettings: EmergencyFundSettings;
     houseFundSettings: HouseFundSettings;
@@ -412,9 +661,15 @@ export const pullDataFromSupabase = async (): Promise<{
       subsRes,
       tripsRes,
       plansRes,
+      listsRes,
+      stockRes,
+      cestaRes,
       cofsRes,
       movsRes,
+      emerRes,
+      invRes,
       renRes,
+      checklistsRes,
       settingsRes,
     ] = await Promise.all([
       client.from('credit_cards').select('*'),
@@ -423,9 +678,15 @@ export const pullDataFromSupabase = async (): Promise<{
       client.from('card_subscriptions').select('*'),
       client.from('grocery_trips').select('*'),
       client.from('grocery_month_plans').select('*'),
+      client.from('shopping_lists').select('*'),
+      client.from('stock_items').select('*'),
+      client.from('cesta_basica_records').select('*'),
       client.from('cofrinhos').select('*'),
       client.from('cofrinho_movements').select('*'),
+      client.from('emergency_contributions').select('*'),
+      client.from('investment_contributions').select('*'),
       client.from('renovation_expenses').select('*'),
+      client.from('monthly_closing_checklists').select('*'),
       client.from('app_settings').select('*'),
     ]);
 
@@ -557,6 +818,51 @@ export const pullDataFromSupabase = async (): Promise<{
       }));
     }
 
+    if (listsRes.data) {
+      resultData.shoppingLists = listsRes.data.map((r: any): ShoppingList => ({
+        id: r.id,
+        name: r.name,
+        type: r.type || 'semanal',
+        monthKey: r.month_key,
+        items: r.items || [],
+        estimatedTotal: Number(r.estimated_total || 0),
+        isDemo: Boolean(r.is_demo),
+        createdAt: r.created_at || new Date().toISOString(),
+      }));
+    }
+
+    if (stockRes.data) {
+      resultData.stockItems = stockRes.data.map((r: any): StockItem => ({
+        id: r.id,
+        product: r.product,
+        category: r.category,
+        categoryGroup: r.category_group || undefined,
+        lastPurchaseDate: r.last_purchase_date || undefined,
+        quantity: Number(r.quantity),
+        unit: r.unit || 'un',
+        estimatedDurationDays: Number(r.estimated_duration_days || 30),
+        nextPurchasePredictedDate: r.next_purchase_predicted_date || undefined,
+        lastPricePaid: r.last_price_paid ? Number(r.last_price_paid) : undefined,
+        store: r.store || 'Supermercado',
+        status: r.status || 'suficiente',
+        isFromCestaBasica: Boolean(r.is_from_cesta_basica),
+        notes: r.notes || undefined,
+        isDemo: Boolean(r.is_demo),
+      }));
+    }
+
+    if (cestaRes.data) {
+      resultData.cestaBasicaRecords = cestaRes.data.map((r: any): CestaBasicaRecord => ({
+        id: r.id,
+        date: r.date,
+        receivedBy: r.received_by || 'Ellen',
+        estimatedSavings: Number(r.estimated_savings || 250),
+        items: r.items || [],
+        notes: r.notes || undefined,
+        isDemo: Boolean(r.is_demo),
+      }));
+    }
+
     if (cofsRes.data) {
       resultData.cofrinhos = cofsRes.data.map((r: any): Cofrinho => ({
         id: r.id,
@@ -609,6 +915,37 @@ export const pullDataFromSupabase = async (): Promise<{
       }));
     }
 
+    if (emerRes.data) {
+      resultData.emergencyContributions = emerRes.data.map((r: any): EmergencyFundContribution => ({
+        id: r.id,
+        date: r.date,
+        person: r.person,
+        amount: Number(r.amount),
+        institution: r.institution,
+        isExtraordinary: Boolean(r.is_extraordinary),
+        status: r.status || 'realizado',
+        transactionId: r.transaction_id || undefined,
+        cofrinhoMovementId: r.cofrinho_movement_id || undefined,
+        notes: r.notes || undefined,
+        isDemo: Boolean(r.is_demo),
+      }));
+    }
+
+    if (invRes.data) {
+      resultData.investmentContributions = invRes.data.map((r: any): InvestmentContribution => ({
+        id: r.id,
+        date: r.date,
+        person: r.person,
+        amount: Number(r.amount),
+        targetAsset: r.target_asset || 'Tesouro Direto / FIIs',
+        status: r.status || 'realizado',
+        transactionId: r.transaction_id || undefined,
+        cofrinhoMovementId: r.cofrinho_movement_id || undefined,
+        notes: r.notes || undefined,
+        isDemo: Boolean(r.is_demo),
+      }));
+    }
+
     if (renRes.data) {
       resultData.renovationExpenses = renRes.data.map((r: any): RenovationExpense => ({
         id: r.id,
@@ -624,6 +961,16 @@ export const pullDataFromSupabase = async (): Promise<{
         alreadyCompensatedAmount: Number(r.already_compensated_amount || 0),
         notes: r.notes || undefined,
         isDemo: Boolean(r.is_demo),
+      }));
+    }
+
+    if (checklistsRes.data) {
+      resultData.closingChecklists = checklistsRes.data.map((r: any): MonthlyClosingChecklist => ({
+        monthKey: r.month_key,
+        checkedItems: r.checked_items || {},
+        isClosed: Boolean(r.is_closed),
+        closedAt: r.closed_at || undefined,
+        notes: r.notes || undefined,
       }));
     }
 

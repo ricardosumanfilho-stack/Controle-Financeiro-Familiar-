@@ -25,9 +25,19 @@ import { GoogleSheetsModal } from './components/sheets/GoogleSheetsModal';
 import { SupabaseModal } from './components/supabase/SupabaseModal';
 import { CreditCard, GroceryTrip, Transaction, InstallmentPurchase } from './types';
 import { motion, AnimatePresence } from 'motion/react';
+import { RotateCcw } from 'lucide-react';
 
 function MainAppContent() {
-  const { activeTab, shoppingLists, updateShoppingList, convertShoppingListToTrip } = useFinance();
+  const {
+    activeTab,
+    shoppingLists,
+    updateShoppingList,
+    convertShoppingListToTrip,
+    recoverableSnapshot,
+    recoveryBannerDismissed,
+    restoreFromSnapshot,
+    dismissRecoveryBanner,
+  } = useFinance();
 
   // Standalone Live Market Mode detection (e.g. ?mode=live-market&listId=xyz)
   const searchParams = new URLSearchParams(window.location.search);
@@ -161,6 +171,49 @@ function MainAppContent() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+        {/* Banner de Recuperação Segura caso haja dados detectados de sessão anterior */}
+        {recoverableSnapshot && !recoveryBannerDismissed && (
+          <div
+            id="emergency-recovery-banner"
+            className="mb-6 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-500 text-white shrink-0 shadow-xs">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-amber-950 dark:text-amber-200 flex items-center gap-2">
+                  Dados de sessão anterior encontrados no Cofre Permanente!
+                  <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-200/80 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300">
+                    Backup Disponível
+                  </span>
+                </h4>
+                <p className="text-xs text-amber-900/80 dark:text-amber-300/80 mt-1 leading-relaxed">
+                  Encontramos um salvamento anterior com <strong>{recoverableSnapshot.transactionsCount} lançamentos</strong> guardados em <strong>{recoverableSnapshot.dateStr}</strong>. Se você não estava vendo seus dados após alguns dias de ausência, clique para restaurá-los imediatamente.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+              <button
+                type="button"
+                onClick={() => restoreFromSnapshot(recoverableSnapshot)}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Restaurar Meus Dados
+              </button>
+              <button
+                type="button"
+                onClick={dismissRecoveryBanner}
+                className="px-3 py-2 rounded-xl text-xs font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
+              >
+                Dispensar
+              </button>
+            </div>
+          </div>
+        )}
+
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}

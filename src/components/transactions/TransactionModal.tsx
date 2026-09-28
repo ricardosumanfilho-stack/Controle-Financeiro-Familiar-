@@ -105,6 +105,17 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [notes, setNotes] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  // Transfer Details (Ricardo ⇄ Ellen or External)
+  const [transferType, setTransferType] = useState<'entre_usuarios' | 'externa'>('entre_usuarios');
+  const [destinationPerson, setDestinationPerson] = useState<Person>('Ellen');
+  const [externalOrigin, setExternalOrigin] = useState('');
+
+  // Brokerage Details (Investments)
+  const [isSentToBrokerage, setIsSentToBrokerage] = useState(false);
+  const [selectedBrokerage, setSelectedBrokerage] = useState('XP Investimentos');
+  const [customBrokerageName, setCustomBrokerageName] = useState('');
+  const [investmentAsset, setInvestmentAsset] = useState('');
+
   // Delete confirmation modals
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteInstallmentMode, setDeleteInstallmentMode] = useState<'subsequent' | 'all' | 'single'>('subsequent');
@@ -198,6 +209,41 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setIsRecurring(editingTransaction.isRecurring ?? true);
       setIsExtraIncome(editingTransaction.isReimbursable ?? false);
       setNotes(editingTransaction.notes || '');
+
+      // Transfer fields
+      setTransferType(editingTransaction.transferType || (editingTransaction.isExternalTransfer ? 'externa' : 'entre_usuarios'));
+      setDestinationPerson(
+        editingTransaction.destinationPerson ||
+        (editingTransaction.person === 'Ricardo' ? 'Ellen' : 'Ricardo')
+      );
+      setExternalOrigin(editingTransaction.externalOrigin || '');
+
+      // Brokerage fields
+      setIsSentToBrokerage(editingTransaction.isSentToBrokerage ?? Boolean(editingTransaction.brokerage));
+      const knownBrokers = [
+        'XP Investimentos',
+        'BTG Pactual',
+        'NuInvest / Nubank',
+        'Rico Investimentos',
+        'Banco Inter',
+        'Clear Corretora',
+        'Sofisa Direto',
+        'Itaú Íon',
+        'Nomad / Avenue',
+      ];
+      if (editingTransaction.brokerage) {
+        if (knownBrokers.includes(editingTransaction.brokerage)) {
+          setSelectedBrokerage(editingTransaction.brokerage);
+          setCustomBrokerageName('');
+        } else {
+          setSelectedBrokerage('__OUTRA__');
+          setCustomBrokerageName(editingTransaction.brokerage);
+        }
+      } else {
+        setSelectedBrokerage('XP Investimentos');
+        setCustomBrokerageName('');
+      }
+      setInvestmentAsset(editingTransaction.description || '');
     } else {
       // Defaults for new entry
       setType('despesa');
@@ -219,6 +265,15 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setIsRecurring(true);
       setIsExtraIncome(false);
       setNotes('');
+
+      // Default Transfer & Brokerage
+      setTransferType('entre_usuarios');
+      setDestinationPerson((person1Name || 'Ricardo') === 'Ricardo' ? 'Ellen' : 'Ricardo');
+      setExternalOrigin('');
+      setIsSentToBrokerage(false);
+      setSelectedBrokerage('XP Investimentos');
+      setCustomBrokerageName('');
+      setInvestmentAsset('');
     }
   }, [editingTransaction, isOpen, selectedMonth, cards, person1Name, person2Name, installmentPurchases]);
 
@@ -312,12 +367,40 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       addCustomCategory(type === 'receita' ? 'receita' : 'despesa', finalCategory);
     }
 
+    if (type === 'transferencia') {
+      if (transferType === 'entre_usuarios' && person === destinationPerson) {
+        setValidationError('A pessoa que envia não pode ser a mesma que recebe a transferência.');
+        return;
+      }
+      finalCategory = transferType === 'externa' ? 'Transferência Externa' : 'Transferência entre Usuários';
+    }
+
+    const effectiveBrokerage = type === 'investimento' && isSentToBrokerage
+      ? (selectedBrokerage === '__OUTRA__' ? customBrokerageName.trim() || 'Corretora' : selectedBrokerage)
+      : undefined;
+
+    if (type === 'investimento' && isSentToBrokerage && selectedBrokerage === '__OUTRA__' && !customBrokerageName.trim()) {
+      setValidationError('Por favor, informe o nome da corretora de investimentos.');
+      return;
+    }
+
     if (!finalCategory) {
       setValidationError('Por favor, selecione ou crie uma categoria.');
       return;
     }
 
-    const finalDescription = description.trim() || finalCategory;
+    let finalDescription = description.trim();
+    if (!finalDescription) {
+      if (type === 'transferencia') {
+        finalDescription = transferType === 'externa'
+          ? `Transferência Externa${externalOrigin.trim() ? ` (${externalOrigin.trim()})` : ''}`
+          : `Transferência: ${person} ➔ ${destinationPerson}`;
+      } else if (type === 'investimento') {
+        finalDescription = investmentAsset.trim() || (effectiveBrokerage ? `Aporte ${effectiveBrokerage}` : finalCategory);
+      } else {
+        finalDescription = finalCategory;
+      }
+    }
 
     // Integrated Installment Purchase on Credit Card (Creation or Edition to multiple installments)
     if (type === 'despesa' && paymentMethod === 'credito' && installments > 1) {
@@ -375,16 +458,22 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       description: finalDescription,
       amount: numAmount,
       type,
-      category: type === 'investimento' ? 'Investimentos' : finalCategory,
+      category: finalCategory,
       person: person || person1Name || 'Ricardo',
+      destinationPerson: type === 'transferencia' && transferType === 'entre_usuarios' ? destinationPerson : undefined,
+      transferType: type === 'transferencia' ? transferType : undefined,
+      isExternalTransfer: type === 'transferencia' ? transferType === 'externa' : false,
+      externalOrigin: type === 'transferencia' && transferType === 'externa' ? externalOrigin.trim() || undefined : undefined,
+      isSentToBrokerage: type === 'investimento' ? isSentToBrokerage : false,
+      brokerage: effectiveBrokerage,
       date: date || new Date().toISOString().slice(0, 10),
       competenceMonth: finalCompetence,
       paid: true,
-      isRecurring,
+      isRecurring: type === 'transferencia' ? false : isRecurring,
       isReimbursable: isExtraIncome,
       paymentMethod,
       cardId: paymentMethod === 'credito' ? cardId || cards[0]?.id : undefined,
-      accountOrPot: type === 'investimento' ? (accountOrPot || finalCategory) : accountOrPot,
+      accountOrPot: type === 'investimento' && effectiveBrokerage ? `Corretora ${effectiveBrokerage}` : accountOrPot,
       notes: notes.trim() || undefined,
     };
 
@@ -420,7 +509,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           amount: numAmount,
           person: payload.person,
           transactionId: createdTx.id,
-          notes: notes.trim() || `Aporte registrado via Novo Lançamento: ${finalDescription}`,
+          notes: notes.trim() || (effectiveBrokerage ? `Aporte corretora ${effectiveBrokerage}: ${finalDescription}` : `Aporte registrado via Novo Lançamento: ${finalDescription}`),
         });
 
         updateTransaction(createdTx.id, {
@@ -428,12 +517,12 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           cofrinhoId: targetCof.id,
         });
 
-        if (targetCof.id === 'cof-reserva' || targetCof.type === 'reserva') {
+        if (targetCof.id === 'cof-reserva' || targetCof.id === 'cof-reserva-ellen' || targetCof.type === 'reserva') {
           addEmergencyContribution({
-            person: payload.person,
+            person: payload.person as 'Ricardo' | 'Ellen',
             amount: numAmount,
             date: payload.date,
-            institution: targetCof.institution || 'Reserva de Emergência',
+            institution: effectiveBrokerage || targetCof.institution || 'Reserva de Emergência',
             transactionId: createdTx.id,
             cofrinhoMovementId: createdMov.id,
             notes: notes.trim() || undefined,
@@ -442,15 +531,27 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             payload.person === 'Ricardo' ? 'Ricardo' : 'Ellen',
             'realizado'
           );
+        } else {
+          addInvestmentContribution({
+            person: payload.person as 'Ricardo' | 'Ellen',
+            amount: numAmount,
+            date: payload.date,
+            targetAsset: investmentAsset.trim() || targetCof.name,
+            brokerage: effectiveBrokerage,
+            transactionId: createdTx.id,
+            notes: notes.trim() || undefined,
+            status: 'realizado',
+          });
         }
       } else {
         addInvestmentContribution({
-          person: payload.person,
+          person: payload.person as 'Ricardo' | 'Ellen',
           amount: numAmount,
           date: payload.date,
-          targetAsset: finalDescription,
+          targetAsset: investmentAsset.trim() || finalDescription,
+          brokerage: effectiveBrokerage,
           transactionId: createdTx.id,
-          notes: notes.trim() || undefined,
+          notes: notes.trim() || (effectiveBrokerage ? `Envio para corretora ${effectiveBrokerage}` : undefined),
           status: 'realizado',
         });
       }
@@ -578,73 +679,283 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             </button>
           </div>
 
-          {/* Seleção de Categoria (com opção Criar Nova como 1ª opção) */}
+          {/* Seleção de Categoria / Transferência / Investimento */}
           <div className="bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700/80 space-y-3">
-            {type === 'investimento' && (
-              <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 rounded-xl space-y-2">
-                <label className="block text-xs font-bold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
-                  <PiggyBank className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  Destino do Aporte (Metas & Cofrinhos)
+            {type === 'transferencia' ? (
+              <div className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 mb-1.5">
+                    Tipo de Transferência
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      id="tx-transfer-internal-btn"
+                      onClick={() => {
+                        setTransferType('entre_usuarios');
+                        setDescription(`Transferência: ${person} ➔ ${destinationPerson}`);
+                      }}
+                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
+                        transferType === 'entre_usuarios'
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      Entre Usuários (Ricardo ⇄ Ellen)
+                    </button>
+                    <button
+                      type="button"
+                      id="tx-transfer-external-btn"
+                      onClick={() => {
+                        setTransferType('externa');
+                        setDescription('Transferência Externa Recebida');
+                      }}
+                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
+                        transferType === 'externa'
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      Transferência Externa (De Terceiro)
+                    </button>
+                  </div>
+                </div>
+
+                {transferType === 'entre_usuarios' ? (
+                  <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/80 rounded-xl space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-purple-900 dark:text-purple-200 mb-1">
+                          Quem Envia (Origem)
+                        </label>
+                        <select
+                          value={person}
+                          onChange={(e) => {
+                            const newSender = e.target.value as Person;
+                            setPerson(newSender);
+                            if (destinationPerson === newSender) {
+                              setDestinationPerson(newSender === 'Ricardo' ? 'Ellen' : 'Ricardo');
+                            }
+                          }}
+                          className="w-full px-3 py-2 text-xs font-semibold bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 rounded-lg text-slate-800 dark:text-slate-100"
+                        >
+                          <option value="Ricardo">{person1Name || 'Ricardo'}</option>
+                          <option value="Ellen">{person2Name || 'Ellen'}</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-purple-900 dark:text-purple-200 mb-1">
+                          Quem Recebe (Saldo Extra)
+                        </label>
+                        <select
+                          value={destinationPerson}
+                          onChange={(e) => setDestinationPerson(e.target.value as Person)}
+                          className="w-full px-3 py-2 text-xs font-semibold bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 rounded-lg text-slate-800 dark:text-slate-100"
+                        >
+                          <option value="Ellen" disabled={person === 'Ellen'}>{person2Name || 'Ellen'} (Receberá como Saldo Extra)</option>
+                          <option value="Ricardo" disabled={person === 'Ricardo'}>{person1Name || 'Ricardo'} (Receberá como Saldo Extra)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-purple-800 dark:text-purple-300">
+                      💡 <strong>Regra de Saldo:</strong> Esta transferência não é somada à receita familiar (o dinheiro já é de vocês). O valor é deduzido de quem envia e entra como <strong>Saldo Extra</strong> para quem recebe.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-xl space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-emerald-900 dark:text-emerald-200 mb-1">
+                          Quem Recebe a Transferência
+                        </label>
+                        <select
+                          value={person}
+                          onChange={(e) => setPerson(e.target.value as Person)}
+                          className="w-full px-3 py-2 text-xs font-semibold bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 rounded-lg text-slate-800 dark:text-slate-100"
+                        >
+                          <option value="Ricardo">{person1Name || 'Ricardo'}</option>
+                          <option value="Ellen">{person2Name || 'Ellen'}</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-emerald-900 dark:text-emerald-200 mb-1">
+                          Origem da Transferência
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Ex: Reembolso da empresa, TED parente..."
+                          value={externalOrigin}
+                          onChange={(e) => setExternalOrigin(e.target.value)}
+                          className="w-full px-3 py-2 text-xs font-medium bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 rounded-lg text-slate-800 dark:text-slate-100"
+                        />
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
+                      💰 <strong>Transferência Externa:</strong> Como o dinheiro vem de terceiros, é computado como <strong>Receita Extraordinária</strong> no demonstrativo do mês.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : type === 'investimento' ? (
+              <div className="space-y-3">
+                {/* Opção de Envio para Corretora de Investimento */}
+                <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-blue-900 dark:text-blue-200 flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        id="tx-is-brokerage-check"
+                        checked={isSentToBrokerage}
+                        onChange={(e) => {
+                          setIsSentToBrokerage(e.target.checked);
+                          if (e.target.checked && (!description || description === 'Investimentos')) {
+                            setDescription(`Aporte ${selectedBrokerage}`);
+                          }
+                        }}
+                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300"
+                      />
+                      <span>Opção de envio para corretora de investimento</span>
+                    </label>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-200 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200">
+                      XP, BTG, NuInvest...
+                    </span>
+                  </div>
+
+                  {isSentToBrokerage && (
+                    <div className="space-y-2.5 pt-2 border-t border-blue-200/80 dark:border-blue-800/80">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-bold text-blue-900 dark:text-blue-200 mb-1">
+                            Corretora de Destino
+                          </label>
+                          <select
+                            id="tx-brokerage-select"
+                            value={selectedBrokerage}
+                            onChange={(e) => {
+                              setSelectedBrokerage(e.target.value);
+                              if (e.target.value !== '__OUTRA__') {
+                                setDescription(`Aporte ${e.target.value}`);
+                              }
+                            }}
+                            className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-700 rounded-lg text-slate-800 dark:text-slate-100 font-semibold"
+                          >
+                            <option value="XP Investimentos">XP Investimentos</option>
+                            <option value="BTG Pactual">BTG Pactual</option>
+                            <option value="NuInvest / Nubank">NuInvest / Nubank</option>
+                            <option value="Rico Investimentos">Rico Investimentos</option>
+                            <option value="Banco Inter">Banco Inter</option>
+                            <option value="Clear Corretora">Clear Corretora</option>
+                            <option value="Sofisa Direto">Sofisa Direto</option>
+                            <option value="Itaú Íon">Itaú Íon</option>
+                            <option value="Nomad / Avenue">Nomad / Avenue</option>
+                            <option value="__OUTRA__">Outra Corretora...</option>
+                          </select>
+                        </div>
+
+                        {selectedBrokerage === '__OUTRA__' ? (
+                          <div>
+                            <label className="block text-[11px] font-bold text-blue-900 dark:text-blue-200 mb-1">
+                              Nome da Outra Corretora
+                            </label>
+                            <input
+                              type="text"
+                              id="tx-custom-brokerage-input"
+                              placeholder="Ex: Órama, Warren, Guide..."
+                              value={customBrokerageName}
+                              onChange={(e) => {
+                                setCustomBrokerageName(e.target.value);
+                                setDescription(`Aporte ${e.target.value}`);
+                              }}
+                              className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-700 rounded-lg text-slate-800 dark:text-slate-100 font-semibold"
+                            />
+                          </div>
+                        ) : (
+                          <div>
+                            <label className="block text-[11px] font-bold text-blue-900 dark:text-blue-200 mb-1">
+                              Ativo / Aplicação (Opcional)
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="Ex: Tesouro Selic 2029, CDB 110%, FII..."
+                              value={investmentAsset}
+                              onChange={(e) => setInvestmentAsset(e.target.value)}
+                              className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-700 rounded-lg text-slate-800 dark:text-slate-100"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Cofrinho / Meta Vinculada */}
+                  <div className="pt-2 border-t border-blue-200/80 dark:border-blue-800/80">
+                    <label className="block text-xs font-bold text-blue-900 dark:text-blue-200 mb-1 flex items-center gap-1.5">
+                      <PiggyBank className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      Vincular a Cofrinho / Meta (Opcional)
+                    </label>
+                    <select
+                      value={selectedCofrinhoTarget}
+                      onChange={(e) => {
+                        setSelectedCofrinhoTarget(e.target.value);
+                        const cof = cofrinhos.find((c) => c.id === e.target.value);
+                        if (cof && !isSentToBrokerage) {
+                          setDescription(cof.name);
+                        }
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-700 rounded-lg font-semibold text-blue-950 dark:text-blue-100"
+                    >
+                      <option value="">Nenhum Cofrinho Específico</option>
+                      <optgroup label="Reservas de Emergência">
+                        {cofrinhos.filter(c => c.type === 'reserva' || c.id.includes('reserva')).map((cof) => (
+                          <option key={cof.id} value={cof.id}>
+                            🛡️ {cof.name} (Saldo: R$ {cof.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Outros Cofrinhos & Metas">
+                        {cofrinhos.filter(c => c.type !== 'reserva' && !c.id.includes('reserva')).map((cof) => (
+                          <option key={cof.id} value={cof.id}>
+                            🐷 {cof.name} (Saldo: R$ {cof.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 mb-1.5 flex items-center justify-between">
+                  <span>Categoria do Lançamento</span>
+                  <span className="text-[11px] font-normal text-slate-400">
+                    Selecione uma existente ou crie uma nova
+                  </span>
                 </label>
                 <select
-                  value={selectedCofrinhoTarget}
-                  onChange={(e) => {
-                    setSelectedCofrinhoTarget(e.target.value);
-                    const cof = cofrinhos.find((c) => c.id === e.target.value);
-                    if (cof) {
-                      setDescription(cof.name);
-                      setSelectedCategoryOption(cof.name);
-                    }
-                  }}
-                  className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-700 rounded-lg focus:ring-2 focus:ring-blue-500 font-semibold text-blue-950 dark:text-blue-100"
+                  id="tx-category-select"
+                  value={isCreatingNewCategory ? '__NEW_CATEGORY__' : selectedCategoryOption}
+                  onChange={(e) => handleCategorySelectChange(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden text-slate-800 dark:text-slate-100 font-medium"
                 >
-                  <optgroup label="Cofrinhos & Metas Ativas">
-                    {cofrinhos.map((cof) => (
-                      <option key={cof.id} value={cof.id}>
-                        🐷 {cof.name} (Saldo: R$ {cof.currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Outros Investimentos / Ativos">
-                    <option value="tesouro">📈 Tesouro Direto / Selic</option>
-                    <option value="cdb">🏦 CDB / Renda Fixa</option>
-                    <option value="acoes">📊 Ações / FIIs</option>
-                    <option value="geral">💼 Investimento Geral</option>
-                  </optgroup>
+                  <option value="__NEW_CATEGORY__" className="font-bold text-blue-600 dark:text-blue-400 bg-blue-50/50">
+                    ➕ + Criar nova categoria...
+                  </option>
+                  <option disabled>────────── Categorias Existentes ──────────</option>
+                  {availableCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
                 </select>
-                <p className="text-[11px] text-blue-700 dark:text-blue-300">
-                  ✨ Este lançamento atualizará automaticamente o saldo do cofrinho e será contabilizado na aba Metas e Cofrinhos.
-                </p>
               </div>
             )}
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 mb-1.5 flex items-center justify-between">
-                <span>Categoria do Lançamento</span>
-                <span className="text-[11px] font-normal text-slate-400">
-                  Selecione uma existente ou crie uma nova
-                </span>
-              </label>
-              <select
-                id="tx-category-select"
-                value={isCreatingNewCategory ? '__NEW_CATEGORY__' : selectedCategoryOption}
-                onChange={(e) => handleCategorySelectChange(e.target.value)}
-                className="w-full px-3.5 py-2.5 text-sm bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-hidden text-slate-800 dark:text-slate-100 font-medium"
-              >
-                <option value="__NEW_CATEGORY__" className="font-bold text-blue-600 dark:text-blue-400 bg-blue-50/50">
-                  ➕ + Criar nova categoria...
-                </option>
-                <option disabled>────────── Categorias Existentes ──────────</option>
-                {availableCategories.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             {/* Campo de Nova Categoria quando selecionado */}
-            {isCreatingNewCategory && (
+            {type !== 'transferencia' && type !== 'investimento' && isCreatingNewCategory && (
               <div className="p-3 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 rounded-xl space-y-2 animate-in fade-in duration-200">
                 <label className="block text-xs font-bold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
                   <PlusCircle className="w-4 h-4 text-blue-600 dark:text-blue-400" />
@@ -707,38 +1018,40 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             </div>
           </div>
 
-          {/* Responsável */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5 flex items-center justify-between">
-              <span>Responsável pelo Lançamento</span>
-              <span className="text-[11px] font-normal text-slate-400">
-                Personalizável nas Configurações
-              </span>
-            </label>
-            <div className="grid grid-cols-2 gap-2.5">
-              {[person1Name || 'Ricardo', person2Name || 'Ellen'].map((pName, idx) => {
-                const active = person === pName || (idx === 0 && person !== person2Name && person !== (person2Name || 'Ellen'));
-                return (
-                  <button
-                    type="button"
-                    key={pName}
-                    id={`person-select-${idx}`}
-                    onClick={() => setPerson(pName)}
-                    className={`py-2.5 px-4 text-xs font-bold rounded-xl border text-center transition-all flex items-center justify-center gap-2 ${
-                      active
-                        ? idx === 0
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                          : 'bg-rose-600 text-white border-rose-600 shadow-xs'
-                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
-                    }`}
-                  >
-                    <span className={`w-2 h-2 rounded-full ${active ? 'bg-white' : idx === 0 ? 'bg-blue-500' : 'bg-rose-500'}`} />
-                    {pName}
-                  </button>
-                );
-              })}
+          {/* Responsável (para despesa, receita ou investimento) */}
+          {type !== 'transferencia' && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5 flex items-center justify-between">
+                <span>Responsável pelo Lançamento</span>
+                <span className="text-[11px] font-normal text-slate-400">
+                  Personalizável nas Configurações
+                </span>
+              </label>
+              <div className="grid grid-cols-2 gap-2.5">
+                {[person1Name || 'Ricardo', person2Name || 'Ellen'].map((pName, idx) => {
+                  const active = person === pName || (idx === 0 && person !== person2Name && person !== (person2Name || 'Ellen'));
+                  return (
+                    <button
+                      type="button"
+                      key={pName}
+                      id={`person-select-${idx}`}
+                      onClick={() => setPerson(pName)}
+                      className={`py-2.5 px-4 text-xs font-bold rounded-xl border text-center transition-all flex items-center justify-center gap-2 ${
+                        active
+                          ? idx === 0
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                            : 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${active ? 'bg-white' : idx === 0 ? 'bg-blue-500' : 'bg-rose-500'}`} />
+                      {pName}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Conta/Cofrinho e Data */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
