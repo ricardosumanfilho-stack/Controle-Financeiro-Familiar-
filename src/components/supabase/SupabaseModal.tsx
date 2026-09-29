@@ -321,9 +321,9 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
             }`}
           >
             <Github className="w-4 h-4" />
-            Integração GitHub
+            GitHub & Vercel
             <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 font-bold">
-              Link Único
+              Nuvem
             </span>
           </button>
 
@@ -539,27 +539,88 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
             </div>
           )}
 
-          {/* ABA 2: INTEGRAÇÃO GITHUB */}
+          {/* ABA 2: INTEGRAÇÃO GITHUB & VERCEL */}
           {activeTab === 'github' && (
             <div className="space-y-6">
-              <div className="p-5 rounded-3xl bg-gradient-to-br from-purple-500/10 via-indigo-500/5 to-slate-50 dark:to-slate-800/40 border border-purple-500/20 shadow-xs space-y-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-bold shadow-md">
-                    <Github className="w-6 h-6" />
+              {/* Alerta Explicativo sobre a Sincronização */}
+              <div className="p-5 rounded-3xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300/80 dark:border-amber-800/80 shadow-xs space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="p-2.5 rounded-xl bg-amber-500 text-white shrink-0 mt-0.5 shadow-xs">
+                    <AlertCircle className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                      Como funciona a Integração com o GitHub?
+                    <h3 className="text-sm font-bold text-amber-950 dark:text-amber-200">
+                      Por que os dados preenchidos no Google AI Studio não aparecem no GitHub ou na Vercel automaticamente?
                     </h3>
-                    <p className="text-xs text-slate-600 dark:text-slate-400">
-                      O código do GitHub e este ambiente conectam-se ao mesmo banco de dados PostgreSQL no Supabase.
+                    <div className="text-xs text-amber-900/90 dark:text-amber-300/90 mt-2 space-y-2 leading-relaxed">
+                      <p>
+                        <strong>1. O GitHub armazena apenas CÓDIGO-FONTE:</strong> Quando você adiciona lançamentos ou cadastra cartões na tela do aplicativo, esses dados <em>não</em> são convertidos em commits de código no GitHub. O GitHub guarda arquivos do sistema, não o banco de dados dos usuários.
+                      </p>
+                      <p>
+                        <strong>2. A Vercel e o AI Studio têm memórias locais separadas:</strong> Por segurança dos navegadores (política de origem isolada), o que é salvo no navegador do Google AI Studio não é compartilhado com a Vercel (<code className="px-1 py-0.5 bg-amber-200/60 dark:bg-amber-900/60 rounded">seu-app.vercel.app</code>).
+                      </p>
+                      <p>
+                        <strong>3. Por que os dados somem ao ficar dias fora do AI Studio?</strong> O Google AI Studio roda em uma máquina temporária na nuvem que desliga quando inativa. Sem um banco de dados em nuvem conectado, ao reabrir ele inicia uma nova sessão limpa com dados de demonstração.
+                      </p>
+                      <p className="font-semibold text-emerald-800 dark:text-emerald-300 pt-1">
+                        👉 <strong>A Solução Definitiva:</strong> Conectar o Supabase! Ao conectar, qualquer lançamento feito no Google AI Studio, na Vercel ou no Celular é salvo na nuvem e sincronizado instantaneamente em todos os lugares.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Guia Passo a Passo: Configuração na Vercel */}
+              <div className="p-5 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-4 shadow-2xs">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-black text-white flex items-center justify-center font-black text-xs">
+                    ▲
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Como sincronizar seu app publicado na Vercel com o Supabase
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Configure em 2 minutos para que a Vercel e o Google AI Studio compartilhem o mesmo banco
                     </p>
                   </div>
                 </div>
 
-                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  Quando você ou sua família abrem o aplicativo pelo link do GitHub (ou GitHub Pages / Vercel), qualquer alteração feita lá é enviada para o Supabase. Graças ao <strong>Timer de Sincronização</strong>, este ambiente busca essas alterações e vice-versa sem que você precise exportar arquivos manualmente!
-                </p>
+                <div className="space-y-2.5 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">1</span>
+                    <div>
+                      Acesse seu painel na <a href="https://vercel.com/dashboard" target="_blank" rel="noreferrer" className="text-blue-600 underline font-bold">Vercel</a> e abra seu projeto.
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">2</span>
+                    <div>
+                      Vá na aba <strong>Settings</strong> &gt; <strong>Environment Variables</strong>.
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">3</span>
+                    <div className="w-full space-y-2">
+                      <div>Adicione as duas variáveis com suas credenciais do Supabase:</div>
+                      <div className="p-2.5 rounded-lg bg-slate-950 text-slate-200 font-mono text-[11px] space-y-1">
+                        <div>Key: <span className="text-emerald-400 font-bold">VITE_SUPABASE_URL</span></div>
+                        <div className="text-slate-400 truncate">Value: {inputUrl || 'https://seu-projeto.supabase.co'}</div>
+                        <div className="pt-1">Key: <span className="text-emerald-400 font-bold">VITE_SUPABASE_ANON_KEY</span></div>
+                        <div className="text-slate-400 truncate">Value: {inputAnonKey ? `${inputAnonKey.slice(0, 20)}...` : 'sua-chave-anon-publica'}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">4</span>
+                    <div>
+                      Vá na aba <strong>Deployments</strong> da Vercel, clique nos três pontinhos <strong>(...)</strong> do último deploy e clique em <strong>Redeploy</strong>. A partir desse momento, a Vercel estará 100% sincronizada com este ambiente!
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Gerador de Link Direto com Credenciais Embutidas */}
@@ -567,35 +628,35 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
                 <div className="flex items-center gap-2">
                   <Link2 className="w-4 h-4 text-emerald-500" />
                   <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                    Gerador de Link com Conexão Automática
+                    Atalho Imediato: Link Mágico com Conexão Automática
                   </h4>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Gere um link já com as chaves do Supabase embutidas na URL. Quem abrir esse link (no GitHub Pages, celular ou outro navegador) já inicia conectado ao banco de dados:
+                  Quer abrir seu app na Vercel ou no Celular já conectado ao Supabase sem ter que configurar variáveis? Digite a URL do seu site abaixo para gerar um link direto:
                 </p>
 
                 <div className="space-y-2">
                   <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                    URL Base do seu app (ex: seu GitHub Pages ou deixe em branco para URL atual):
+                    URL do seu app (ex: https://meu-financeiro.vercel.app):
                   </label>
                   <input
                     type="text"
                     value={customGitHubUrl}
                     onChange={(e) => setCustomGitHubUrl(e.target.value)}
-                    placeholder="https://seu-usuario.github.io/gestao-financeira/"
+                    placeholder="https://seu-app.vercel.app"
                     className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-800 dark:text-slate-200 font-mono"
                   />
                 </div>
 
                 <div className="p-3 bg-slate-950 text-slate-200 rounded-xl text-[11px] font-mono break-all select-all flex items-center justify-between gap-3">
-                  <span className="truncate">{generatedGitHubLink || 'Configure as credenciais primeiro'}</span>
+                  <span className="truncate">{generatedGitHubLink || 'Configure as credenciais primeiro na aba Credenciais'}</span>
                   <button
                     onClick={handleCopyLink}
                     disabled={!generatedGitHubLink}
                     className="shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-sans font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"
                   >
                     {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    {copiedLink ? 'Copiado!' : 'Copiar'}
+                    {copiedLink ? 'Copiado!' : 'Copiar Link'}
                   </button>
                 </div>
 
@@ -607,7 +668,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
                       rel="noreferrer"
                       className="inline-flex items-center gap-1.5 text-xs text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 font-bold"
                     >
-                      Testar link abrindo em nova aba
+                      Abrir link e conectar agora
                       <ExternalLink className="w-3.5 h-3.5" />
                     </a>
                   </div>
@@ -619,7 +680,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                     <Key className="w-4 h-4 text-indigo-500" />
-                    Configurar Variáveis no Repositório do GitHub (.env)
+                    Configuração no Repositório do GitHub (.env)
                   </h4>
                   <div className="flex items-center gap-2">
                     <button
@@ -640,7 +701,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({ isOpen, onClose })
                 </div>
 
                 <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Para que o deploy no GitHub (Pages ou Actions) compile com o Supabase ativo por padrão, configure as variáveis de ambiente nos Secrets do repositório:
+                  Para que o deploy via GitHub Actions ou Pages compile com o Supabase ativo por padrão, configure as variáveis de ambiente nos Secrets do repositório:
                 </p>
 
                 <div className="p-3 rounded-xl bg-slate-950 text-slate-200 font-mono text-[11px] space-y-1">

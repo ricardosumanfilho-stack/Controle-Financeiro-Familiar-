@@ -25,7 +25,7 @@ import { GoogleSheetsModal } from './components/sheets/GoogleSheetsModal';
 import { SupabaseModal } from './components/supabase/SupabaseModal';
 import { CreditCard, GroceryTrip, Transaction, InstallmentPurchase } from './types';
 import { motion, AnimatePresence } from 'motion/react';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, Database } from 'lucide-react';
 
 function MainAppContent() {
   const {
@@ -37,7 +37,10 @@ function MainAppContent() {
     recoveryBannerDismissed,
     restoreFromSnapshot,
     dismissRecoveryBanner,
+    isSupabaseConnected,
   } = useFinance();
+
+  const [syncBannerDismissed, setSyncBannerDismissed] = useState(false);
 
   // Standalone Live Market Mode detection (e.g. ?mode=live-market&listId=xyz)
   const searchParams = new URLSearchParams(window.location.search);
@@ -209,6 +212,49 @@ function MainAppContent() {
                 className="px-3 py-2 rounded-xl text-xs font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
               >
                 Dispensar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Banner de Sincronização Automática com Supabase se ainda não configurado */}
+        {!isSupabaseConnected && !syncBannerDismissed && (
+          <div
+            id="supabase-connect-banner"
+            className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-emerald-500/10 dark:from-slate-900/90 dark:to-indigo-950/40 border border-blue-300 dark:border-blue-700/60 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-blue-600 text-white shrink-0 shadow-xs">
+                <Database className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-blue-950 dark:text-blue-200 flex items-center gap-2">
+                  Ativar Sincronização Automática (Opção A - Supabase)
+                  <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-200/80 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300">
+                    Nuvem em Tempo Real
+                  </span>
+                </h4>
+                <p className="text-xs text-blue-900/80 dark:text-blue-300/80 mt-1 leading-relaxed">
+                  Para que o que você preencher aqui <strong>sincronize sozinho com a Vercel e o GitHub</strong> e <strong>nunca mais se perca após dias sem acessar</strong>, conecte as credenciais do seu Supabase.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+              <button
+                type="button"
+                onClick={() => setIsSupabaseModalOpen(true)}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Database className="w-3.5 h-3.5" />
+                Conectar Agora (Opção A)
+              </button>
+              <button
+                type="button"
+                onClick={() => setSyncBannerDismissed(true)}
+                className="px-3 py-2 rounded-xl text-xs font-semibold text-blue-700 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors cursor-pointer"
+              >
+                Lembrar depois
               </button>
             </div>
           </div>

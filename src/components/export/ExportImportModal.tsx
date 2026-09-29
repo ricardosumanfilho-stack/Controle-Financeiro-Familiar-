@@ -70,6 +70,38 @@ export const ExportImportModal: React.FC<ExportImportModalProps> = ({ isOpen, on
           </div>
         )}
 
+        {/* Guia Rápido: Sincronizar Google AI Studio ↔ Vercel */}
+        <div className="p-4 bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 rounded-2xl space-y-2.5">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🔄</span>
+            <h4 className="text-xs font-bold text-blue-950 dark:text-blue-200">
+              Como sincronizar dados entre Google AI Studio e Vercel sem banco de dados?
+            </h4>
+          </div>
+          <p className="text-xs text-blue-900/80 dark:text-blue-300/90 leading-relaxed">
+            Por segurança dos navegadores, a memória do Google AI Studio e da Vercel são isoladas (não se conversam diretamente). Para transferir seus dados preenchidos aqui para a Vercel agora mesmo:
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs">
+            <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/60 border border-blue-100 dark:border-blue-800/60 flex items-start gap-2">
+              <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0">1</span>
+              <div>
+                <strong className="block text-slate-800 dark:text-slate-200">Aqui no AI Studio:</strong>
+                <span className="text-slate-600 dark:text-slate-400 text-[11px]">Clique em <strong>Backup JSON</strong> abaixo para salvar seus dados no seu computador.</span>
+              </div>
+            </div>
+            <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/60 border border-blue-100 dark:border-blue-800/60 flex items-start gap-2">
+              <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0">2</span>
+              <div>
+                <strong className="block text-slate-800 dark:text-slate-200">No seu site na Vercel:</strong>
+                <span className="text-slate-600 dark:text-slate-400 text-[11px]">Abra seu app na Vercel, clique em <strong>Restaurar Backup</strong> e selecione o arquivo. Pronto!</span>
+              </div>
+            </div>
+          </div>
+          <p className="text-[11px] text-blue-800 dark:text-blue-300/80 italic">
+            * Dica: Se quiser sincronização automática 100% em tempo real sem precisar baixar arquivos, use o botão <strong>Supabase</strong> no topo.
+          </p>
+        </div>
+
         {/* Seção de Demonstração */}
         <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-2xl space-y-3">
           <div className="flex items-center justify-between">

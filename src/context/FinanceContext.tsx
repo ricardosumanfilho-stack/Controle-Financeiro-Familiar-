@@ -61,6 +61,7 @@ import {
   isSupabaseConfigured,
   pushLocalDataToSupabase,
   pullDataFromSupabase,
+  deleteItemFromSupabase,
   getSupabaseCredentials,
   SUPABASE_STORAGE_KEYS,
 } from '../services/supabase';
@@ -1340,8 +1341,157 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
   }, [supabaseSyncInterval]);
 
-  // Sincronização Bidirecional (Pull + Push) com o Supabase
+  // Helper de assinatura rápida para detecção precisa de alterações reais
+  const computeDataHash = useCallback((data: {
+    transactions?: any[];
+    cards?: any[];
+    cardSubscriptions?: any[];
+    cofrinhos?: any[];
+    cofrinhoMovements?: any[];
+    installmentPurchases?: any[];
+    groceryTrips?: any[];
+    groceryPlansByMonth?: Record<string, any>;
+    shoppingLists?: any[];
+    stockItems?: any[];
+    cestaBasicaRecords?: any[];
+    salarySettings?: any;
+    emergencySettings?: any;
+    houseFundSettings?: any;
+    futureRentSettings?: any;
+    globalCofrinhoSettings?: any;
+    closingChecklists?: any[];
+    investmentContributions?: any[];
+    emergencyContributions?: any[];
+    renovationExpenses?: any[];
+  }): string => {
+    try {
+      return JSON.stringify({
+        tx: data.transactions?.map((t) => [t.id, t.amount, t.paid, t.date, t.description, t.cardId, t.category, t.type]),
+        cd: data.cards?.map((c) => [c.id, c.name, c.closingDay, c.dueDay, c.monthlyLimitGoal, c.person, c.color]),
+        cs: data.cardSubscriptions?.map((s) => [s.id, s.name, s.amount, s.person, s.cardId, s.isActive]),
+        cf: data.cofrinhos?.map((c) => [c.id, c.name, c.currentBalance, c.initialBalance, c.targetAmount, c.yieldType]),
+        cm: data.cofrinhoMovements?.map((m) => [m.id, m.cofrinhoId, m.amount, m.date, m.type, m.person]),
+        ip: data.installmentPurchases?.map((i) => [i.id, i.description, i.totalAmount, i.remainingInstallments, i.currentInstallment, i.status, i.cardId]),
+        gt: data.groceryTrips?.map((g) => [g.id, g.storeName, g.totalAmount, g.date, g.person, g.items?.length]),
+        gp: data.groceryPlansByMonth ? Object.keys(data.groceryPlansByMonth) : [],
+        sl: data.shoppingLists?.map((s) => [s.id, s.name, s.items?.length]),
+        si: data.stockItems?.map((s) => [s.id, s.product, s.quantity, s.status]),
+        cb: data.cestaBasicaRecords?.map((c) => [c.id, c.date, c.items?.length]),
+        ss: data.salarySettings,
+        es: data.emergencySettings,
+        hf: data.houseFundSettings,
+        fr: data.futureRentSettings,
+        gc: data.globalCofrinhoSettings,
+        cc: data.closingChecklists?.map((c) => [c.monthKey, c.isClosed]),
+        ic: data.investmentContributions?.map((i) => [i.id, i.date, i.amount, i.person, i.status]),
+        ec: data.emergencyContributions?.map((e) => [e.id, e.date, e.amount, e.person, e.status]),
+        re: data.renovationExpenses?.map((r) => [r.id, r.date, r.amount, r.ownerAuthorized]),
+      });
+    } catch {
+      return String(Date.now());
+    }
+  }, []);
+
+  // Hash da última versão sincronizada com a nuvem (impede loop infinito de auto-save)
+  const lastSyncedHashRef = useRef<string>('');
   const isSyncInProgressRef = useRef(false);
+  const hasCompletedInitialPullRef = useRef(!isSupabaseConfigured());
+  const hasPendingLocalChangesRef = useRef(false);
+  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Executa o envio completo dos dados para o Supabase (Local -> Nuvem)
+  const performPushToSupabase = useCallback(async (hashToCommit?: string): Promise<boolean> => {
+    if (!isSupabaseConfigured() || isSyncInProgressRef.current) return false;
+    isSyncInProgressRef.current = true;
+    try {
+      const checklistsMap: Record<string, any> = {};
+      closingChecklistsRef.current.forEach((c) => {
+        checklistsMap[c.monthKey] = c;
+      });
+
+      const allPlans = Object.values(groceryPlansByMonthRef.current);
+      const res = await pushLocalDataToSupabase({
+        cards: cardsRef.current,
+        transactions: transactionsRef.current,
+        installmentPurchases: installmentPurchasesRef.current,
+        cardSubscriptions: cardSubscriptionsRef.current,
+        groceryTrips: groceryTripsRef.current,
+        groceryMonthPlans: allPlans.length > 0 ? allPlans : [groceryPlanRef.current],
+        shoppingLists: shoppingListsRef.current,
+        stockItems: stockItemsRef.current,
+        cestaBasicaRecords: cestaBasicaRecordsRef.current,
+        cofrinhos: cofrinhosRef.current,
+        cofrinhoMovements: cofrinhoMovementsRef.current,
+        emergencyContributions: emergencyContributionsRef.current,
+        investmentContributions: investmentContributionsRef.current,
+        renovationExpenses: renovationExpensesRef.current,
+        monthlyClosingChecklists: checklistsMap,
+        salarySettings: salarySettingsRef.current,
+        emergencySettings: emergencySettingsRef.current,
+        houseFundSettings: houseFundSettingsRef.current,
+        futureRentSettings: futureRentSettingsRef.current,
+        globalCofrinhoSettings: globalCofrinhoSettingsRef.current,
+      });
+
+      if (res.success) {
+        hasPendingLocalChangesRef.current = false;
+        lastSyncedHashRef.current = hashToCommit || computeDataHash({
+          transactions: transactionsRef.current,
+          cards: cardsRef.current,
+          cardSubscriptions: cardSubscriptionsRef.current,
+          cofrinhos: cofrinhosRef.current,
+          cofrinhoMovements: cofrinhoMovementsRef.current,
+          installmentPurchases: installmentPurchasesRef.current,
+          groceryTrips: groceryTripsRef.current,
+          groceryPlansByMonth: groceryPlansByMonthRef.current,
+          shoppingLists: shoppingListsRef.current,
+          stockItems: stockItemsRef.current,
+          cestaBasicaRecords: cestaBasicaRecordsRef.current,
+          salarySettings: salarySettingsRef.current,
+          emergencySettings: emergencySettingsRef.current,
+          houseFundSettings: houseFundSettingsRef.current,
+          futureRentSettings: futureRentSettingsRef.current,
+          globalCofrinhoSettings: globalCofrinhoSettingsRef.current,
+          closingChecklists: closingChecklistsRef.current,
+          investmentContributions: investmentContributionsRef.current,
+          emergencyContributions: emergencyContributionsRef.current,
+          renovationExpenses: renovationExpensesRef.current,
+        });
+        notifySaved(true);
+        const nowTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setSupabaseLastSyncTime(nowTime);
+        setSupabaseSyncStatus('success');
+        setSupabaseNextSyncSeconds(supabaseSyncInterval);
+        safeStorageSet(SUPABASE_STORAGE_KEYS.LAST_SYNC_TIME, nowTime);
+        safeStorageSet(SUPABASE_STORAGE_KEYS.LAST_SYNC_STATUS, 'success');
+        return true;
+      } else {
+        notifySaved(false);
+        setSupabaseSyncStatus('error');
+        setSupabaseSyncError(res.message);
+        return false;
+      }
+    } catch (e: any) {
+      console.warn('Falha no auto-push para Supabase:', e);
+      notifySaved(false);
+      setSupabaseSyncStatus('error');
+      setSupabaseSyncError(e?.message || 'Erro no envio');
+      return false;
+    } finally {
+      isSyncInProgressRef.current = false;
+    }
+  }, [computeDataHash, notifySaved, supabaseSyncInterval]);
+
+  // Flush imediato de alterações pendentes (cancela debounce e envia agora)
+  const flushPushToSupabase = useCallback(() => {
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
+    }
+    return performPushToSupabase();
+  }, [performPushToSupabase]);
+
+  // Sincronização Bidirecional (Pull + Push) com o Supabase
   const syncWithSupabase = useCallback(async (direction: 'both' | 'pull' | 'push' = 'both'): Promise<{ success: boolean; message: string }> => {
     if (!isSupabaseConfigured()) {
       setIsSupabaseConnected(false);
@@ -1358,78 +1508,236 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     setSupabaseSyncError(null);
 
     try {
+      let hasCloudContent = false;
       // 1. PULL: Baixa as alterações mais recentes do Supabase (Nuvem -> Local)
       if (direction === 'pull' || direction === 'both') {
         const pullRes = await pullDataFromSupabase();
         if (pullRes.success && pullRes.data) {
           const d = pullRes.data;
-          if (d.cards && d.cards.length > 0) setCards(d.cards);
-          if (d.transactions && d.transactions.length > 0) setTransactions(d.transactions);
-          if (d.installmentPurchases && d.installmentPurchases.length > 0) setInstallmentPurchases(d.installmentPurchases);
-          if (d.cardSubscriptions && d.cardSubscriptions.length > 0) setCardSubscriptions(d.cardSubscriptions);
-          if (d.groceryTrips && d.groceryTrips.length > 0) setGroceryTrips(d.groceryTrips);
-          if (d.groceryMonthPlans && d.groceryMonthPlans.length > 0) {
-            const plansMap: Record<string, GroceryMonthPlan> = {};
-            d.groceryMonthPlans.forEach((p) => {
-              plansMap[p.monthKey] = p;
+          hasCloudContent = Boolean(
+            pullRes.hasCloudContent ||
+            (d.cards && d.cards.length > 0) ||
+            (d.transactions && d.transactions.length > 0) ||
+            (d.cofrinhos && d.cofrinhos.length > 0) ||
+            (d.groceryTrips && d.groceryTrips.length > 0) ||
+            (d.installmentPurchases && d.installmentPurchases.length > 0) ||
+            (d.cardSubscriptions && d.cardSubscriptions.length > 0)
+          );
+
+          // Se a nuvem tem conteúdo ativo, aplica o estado da nuvem fielmente
+          if (hasCloudContent) {
+            if (d.cards !== undefined) {
+              setCards(d.cards);
+              cardsRef.current = d.cards;
+              safeStorageSet(STORAGE_KEYS.CARDS, d.cards);
+            }
+            if (d.transactions !== undefined) {
+              setTransactions(d.transactions);
+              transactionsRef.current = d.transactions;
+              safeStorageSet(STORAGE_KEYS.TRANSACTIONS, d.transactions);
+            }
+            if (d.installmentPurchases !== undefined) {
+              setInstallmentPurchases(d.installmentPurchases);
+              installmentPurchasesRef.current = d.installmentPurchases;
+              safeStorageSet(STORAGE_KEYS.INSTALLMENTS, d.installmentPurchases);
+            }
+            if (d.cardSubscriptions !== undefined) {
+              setCardSubscriptions(d.cardSubscriptions);
+              cardSubscriptionsRef.current = d.cardSubscriptions;
+              safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, d.cardSubscriptions);
+            }
+            if (d.groceryTrips !== undefined) {
+              setGroceryTrips(d.groceryTrips);
+              groceryTripsRef.current = d.groceryTrips;
+              safeStorageSet(STORAGE_KEYS.GROCERY, d.groceryTrips);
+            }
+            if (d.groceryMonthPlans && d.groceryMonthPlans.length > 0) {
+              const plansMap: Record<string, GroceryMonthPlan> = {};
+              d.groceryMonthPlans.forEach((p) => {
+                plansMap[p.monthKey] = p;
+              });
+              setGroceryPlansByMonth((prev) => ({ ...prev, ...plansMap }));
+              groceryPlansByMonthRef.current = { ...groceryPlansByMonthRef.current, ...plansMap };
+              safeStorageSet(STORAGE_KEYS.GROCERY_PLANS_BY_MONTH, plansMap);
+              const curPlan = d.groceryMonthPlans.find((p) => p.monthKey === selectedMonth) || d.groceryMonthPlans[0];
+              if (curPlan) {
+                setGroceryPlan(curPlan);
+                groceryPlanRef.current = curPlan;
+              }
+            }
+            if (d.shoppingLists !== undefined) {
+              setShoppingLists(d.shoppingLists);
+              shoppingListsRef.current = d.shoppingLists;
+              safeStorageSet(STORAGE_KEYS.SHOPPING_LISTS, d.shoppingLists);
+            }
+            if (d.stockItems !== undefined) {
+              setStockItems(d.stockItems);
+              stockItemsRef.current = d.stockItems;
+              safeStorageSet(STORAGE_KEYS.STOCK_ITEMS, d.stockItems);
+            }
+            if (d.cestaBasicaRecords !== undefined) {
+              setCestaBasicaRecords(d.cestaBasicaRecords);
+              cestaBasicaRecordsRef.current = d.cestaBasicaRecords;
+              safeStorageSet(STORAGE_KEYS.CESTA_BASICA, d.cestaBasicaRecords);
+            }
+            if (d.cofrinhos !== undefined) {
+              setCofrinhos(d.cofrinhos);
+              cofrinhosRef.current = d.cofrinhos;
+              safeStorageSet(STORAGE_KEYS.COFRINHOS, d.cofrinhos);
+            }
+            if (d.cofrinhoMovements !== undefined) {
+              setCofrinhoMovements(d.cofrinhoMovements);
+              cofrinhoMovementsRef.current = d.cofrinhoMovements;
+              safeStorageSet(STORAGE_KEYS.COFRINHO_MOVEMENTS, d.cofrinhoMovements);
+            }
+            if (d.emergencyContributions !== undefined) {
+              setEmergencyContributions(d.emergencyContributions);
+              emergencyContributionsRef.current = d.emergencyContributions;
+              safeStorageSet(STORAGE_KEYS.EMERGENCY, d.emergencyContributions);
+            }
+            if (d.investmentContributions !== undefined) {
+              setInvestmentContributions(d.investmentContributions);
+              investmentContributionsRef.current = d.investmentContributions;
+              safeStorageSet(STORAGE_KEYS.INVESTMENTS, d.investmentContributions);
+            }
+            if (d.renovationExpenses !== undefined) {
+              setRenovationExpenses(d.renovationExpenses);
+              renovationExpensesRef.current = d.renovationExpenses;
+              safeStorageSet(STORAGE_KEYS.RENOVATION_EXPENSES, d.renovationExpenses);
+            }
+            if (d.closingChecklists !== undefined) {
+              setClosingChecklists(d.closingChecklists);
+              closingChecklistsRef.current = d.closingChecklists;
+              safeStorageSet(STORAGE_KEYS.CLOSING_CHECKLISTS, d.closingChecklists);
+            }
+            if (d.salarySettings) {
+              setSalarySettings(d.salarySettings);
+              salarySettingsRef.current = d.salarySettings;
+              safeStorageSet(STORAGE_KEYS.SALARY_SETTINGS, d.salarySettings);
+            }
+            if (d.emergencySettings) {
+              setEmergencySettings(d.emergencySettings);
+              emergencySettingsRef.current = d.emergencySettings;
+              safeStorageSet(STORAGE_KEYS.EMERGENCY_SETTINGS, d.emergencySettings);
+            }
+            if (d.houseFundSettings) {
+              setHouseFundSettings(d.houseFundSettings);
+              houseFundSettingsRef.current = d.houseFundSettings;
+              safeStorageSet(STORAGE_KEYS.HOUSE_FUND_SETTINGS, d.houseFundSettings);
+            }
+            if (d.futureRentSettings) {
+              setFutureRentSettings(d.futureRentSettings);
+              futureRentSettingsRef.current = d.futureRentSettings;
+              safeStorageSet(STORAGE_KEYS.FUTURE_RENT_SETTINGS, d.futureRentSettings);
+            }
+            if (d.globalCofrinhoSettings) {
+              setGlobalCofrinhoSettings(d.globalCofrinhoSettings);
+              globalCofrinhoSettingsRef.current = d.globalCofrinhoSettings;
+              safeStorageSet(STORAGE_KEYS.GLOBAL_COFRINHO_SETTINGS, d.globalCofrinhoSettings);
+            }
+
+            // Atualiza hash local sincronizado para refletir o estado exato da nuvem
+            lastSyncedHashRef.current = computeDataHash({
+              transactions: d.transactions || transactionsRef.current,
+              cards: d.cards || cardsRef.current,
+              cardSubscriptions: d.cardSubscriptions || cardSubscriptionsRef.current,
+              cofrinhos: d.cofrinhos || cofrinhosRef.current,
+              cofrinhoMovements: d.cofrinhoMovements || cofrinhoMovementsRef.current,
+              installmentPurchases: d.installmentPurchases || installmentPurchasesRef.current,
+              groceryTrips: d.groceryTrips || groceryTripsRef.current,
+              groceryPlansByMonth: groceryPlansByMonthRef.current,
+              shoppingLists: d.shoppingLists || shoppingListsRef.current,
+              stockItems: d.stockItems || stockItemsRef.current,
+              cestaBasicaRecords: d.cestaBasicaRecords || cestaBasicaRecordsRef.current,
+              salarySettings: d.salarySettings || salarySettingsRef.current,
+              emergencySettings: d.emergencySettings || emergencySettingsRef.current,
+              houseFundSettings: d.houseFundSettings || houseFundSettingsRef.current,
+              futureRentSettings: d.futureRentSettings || futureRentSettingsRef.current,
+              globalCofrinhoSettings: d.globalCofrinhoSettings || globalCofrinhoSettingsRef.current,
+              closingChecklists: d.closingChecklists || closingChecklistsRef.current,
+              investmentContributions: d.investmentContributions || investmentContributionsRef.current,
+              emergencyContributions: d.emergencyContributions || emergencyContributionsRef.current,
+              renovationExpenses: d.renovationExpenses || renovationExpensesRef.current,
             });
-            setGroceryPlansByMonth((prev) => ({ ...prev, ...plansMap }));
-            const curPlan = d.groceryMonthPlans.find((p) => p.monthKey === selectedMonth) || d.groceryMonthPlans[0];
-            if (curPlan) setGroceryPlan(curPlan);
+
+            hasPendingLocalChangesRef.current = false;
+
+            saveVaultSnapshot(
+              {
+                cards: d.cards || cardsRef.current,
+                transactions: d.transactions || transactionsRef.current,
+                cofrinhos: d.cofrinhos || cofrinhosRef.current,
+              },
+              'Sincronizado da Nuvem Supabase'
+            );
           }
-          if (d.shoppingLists && d.shoppingLists.length > 0) setShoppingLists(d.shoppingLists);
-          if (d.stockItems && d.stockItems.length > 0) setStockItems(d.stockItems);
-          if (d.cestaBasicaRecords && d.cestaBasicaRecords.length > 0) setCestaBasicaRecords(d.cestaBasicaRecords);
-          if (d.cofrinhos && d.cofrinhos.length > 0) setCofrinhos(d.cofrinhos);
-          if (d.cofrinhoMovements && d.cofrinhoMovements.length > 0) setCofrinhoMovements(d.cofrinhoMovements);
-          if (d.emergencyContributions && d.emergencyContributions.length > 0) setEmergencyContributions(d.emergencyContributions);
-          if (d.investmentContributions && d.investmentContributions.length > 0) setInvestmentContributions(d.investmentContributions);
-          if (d.renovationExpenses && d.renovationExpenses.length > 0) setRenovationExpenses(d.renovationExpenses);
-          if (d.closingChecklists && d.closingChecklists.length > 0) setClosingChecklists(d.closingChecklists);
-          if (d.salarySettings) setSalarySettings(d.salarySettings);
-          if (d.emergencySettings) setEmergencySettings(d.emergencySettings);
-          if (d.houseFundSettings) setHouseFundSettings(d.houseFundSettings);
-          if (d.futureRentSettings) setFutureRentSettings(d.futureRentSettings);
-          if (d.globalCofrinhoSettings) setGlobalCofrinhoSettings(d.globalCofrinhoSettings);
         } else if (!pullRes.success && direction === 'pull') {
           throw new Error(pullRes.message);
         }
       }
 
+      // Concluiu pull inicial, agora pode permitir auto-push de alterações reais
+      hasCompletedInitialPullRef.current = true;
+
       // 2. PUSH: Envia o estado atual para o Supabase (Local -> Nuvem)
-      if (direction === 'push' || direction === 'both') {
+      // SOMENTE se direction for explicitamente 'push', OU se 'both' e a nuvem estava vazia (primeira semeadura do banco)
+      if (direction === 'push' || (direction === 'both' && !hasCloudContent)) {
         const checklistsMap: Record<string, any> = {};
-        closingChecklists.forEach((c) => {
+        closingChecklistsRef.current.forEach((c) => {
           checklistsMap[c.monthKey] = c;
         });
 
-        const allPlans = Object.values(groceryPlansByMonth);
+        const allPlans = Object.values(groceryPlansByMonthRef.current);
         const pushRes = await pushLocalDataToSupabase({
-          cards,
-          transactions,
-          installmentPurchases,
-          cardSubscriptions,
-          groceryTrips,
-          groceryMonthPlans: allPlans.length > 0 ? allPlans : [groceryPlan],
-          shoppingLists,
-          stockItems,
-          cestaBasicaRecords,
-          cofrinhos,
-          cofrinhoMovements,
-          emergencyContributions,
-          investmentContributions,
-          renovationExpenses,
+          cards: cardsRef.current,
+          transactions: transactionsRef.current,
+          installmentPurchases: installmentPurchasesRef.current,
+          cardSubscriptions: cardSubscriptionsRef.current,
+          groceryTrips: groceryTripsRef.current,
+          groceryMonthPlans: allPlans.length > 0 ? allPlans : [groceryPlanRef.current],
+          shoppingLists: shoppingListsRef.current,
+          stockItems: stockItemsRef.current,
+          cestaBasicaRecords: cestaBasicaRecordsRef.current,
+          cofrinhos: cofrinhosRef.current,
+          cofrinhoMovements: cofrinhoMovementsRef.current,
+          emergencyContributions: emergencyContributionsRef.current,
+          investmentContributions: investmentContributionsRef.current,
+          renovationExpenses: renovationExpensesRef.current,
           monthlyClosingChecklists: checklistsMap,
-          salarySettings,
-          emergencySettings,
-          houseFundSettings,
-          futureRentSettings,
-          globalCofrinhoSettings,
+          salarySettings: salarySettingsRef.current,
+          emergencySettings: emergencySettingsRef.current,
+          houseFundSettings: houseFundSettingsRef.current,
+          futureRentSettings: futureRentSettingsRef.current,
+          globalCofrinhoSettings: globalCofrinhoSettingsRef.current,
         });
 
         if (!pushRes.success && direction === 'push') {
           throw new Error(pushRes.message);
         }
+
+        hasPendingLocalChangesRef.current = false;
+        lastSyncedHashRef.current = computeDataHash({
+          transactions: transactionsRef.current,
+          cards: cardsRef.current,
+          cardSubscriptions: cardSubscriptionsRef.current,
+          cofrinhos: cofrinhosRef.current,
+          cofrinhoMovements: cofrinhoMovementsRef.current,
+          installmentPurchases: installmentPurchasesRef.current,
+          groceryTrips: groceryTripsRef.current,
+          groceryPlansByMonth: groceryPlansByMonthRef.current,
+          shoppingLists: shoppingListsRef.current,
+          stockItems: stockItemsRef.current,
+          cestaBasicaRecords: cestaBasicaRecordsRef.current,
+          salarySettings: salarySettingsRef.current,
+          emergencySettings: emergencySettingsRef.current,
+          houseFundSettings: houseFundSettingsRef.current,
+          futureRentSettings: futureRentSettingsRef.current,
+          globalCofrinhoSettings: globalCofrinhoSettingsRef.current,
+          closingChecklists: closingChecklistsRef.current,
+          investmentContributions: investmentContributionsRef.current,
+          emergencyContributions: emergencyContributionsRef.current,
+          renovationExpenses: renovationExpensesRef.current,
+        });
       }
 
       const nowTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -1451,39 +1759,28 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       isSyncInProgressRef.current = false;
     }
   }, [
-    cards,
-    transactions,
-    installmentPurchases,
-    cardSubscriptions,
-    groceryTrips,
-    groceryPlan,
-    groceryPlansByMonth,
-    shoppingLists,
-    stockItems,
-    cestaBasicaRecords,
-    cofrinhos,
-    cofrinhoMovements,
-    emergencyContributions,
-    investmentContributions,
-    renovationExpenses,
-    closingChecklists,
-    salarySettings,
-    emergencySettings,
-    houseFundSettings,
-    futureRentSettings,
-    globalCofrinhoSettings,
+    computeDataHash,
     selectedMonth,
     supabaseSyncInterval,
   ]);
 
-  // Timer periódio de Sincronização Contínua (Supabase Polling Timer)
+  // Ref estável para a função de sincronização (impede recriação de timers e listeners)
+  const syncWithSupabaseRef = useRef(syncWithSupabase);
+  useEffect(() => {
+    syncWithSupabaseRef.current = syncWithSupabase;
+  }, [syncWithSupabase]);
+
+  // Timer periódico de Sincronização Contínua (Supabase Polling Timer)
   useEffect(() => {
     if (!supabaseAutoSyncEnabled || !isSupabaseConnected) return;
 
     const timer = setInterval(() => {
       setSupabaseNextSyncSeconds((prev) => {
         if (prev <= 1) {
-          syncWithSupabase('both');
+          // Só faz pull periódico se não tiver alterações locais pendentes
+          if (!hasPendingLocalChangesRef.current && !isSyncInProgressRef.current) {
+            syncWithSupabaseRef.current('pull');
+          }
           return supabaseSyncInterval;
         }
         return prev - 1;
@@ -1491,97 +1788,103 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [supabaseAutoSyncEnabled, isSupabaseConnected, supabaseSyncInterval, syncWithSupabase]);
+  }, [supabaseAutoSyncEnabled, isSupabaseConnected, supabaseSyncInterval]);
 
   // Listener para foco da janela / troca de aba do navegador
-  // Quando o usuário volta para esta aba vindo do GitHub ou de outro dispositivo, sincroniza imediatamente!
+  // NUNCA sobrescreve dados locais com pull se houver alterações locais pendentes
   useEffect(() => {
     const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible' && supabaseAutoSyncEnabled && isSupabaseConfigured()) {
-        syncWithSupabase('both');
+      if (!supabaseAutoSyncEnabled || !isSupabaseConfigured()) return;
+
+      if (document.visibilityState === 'hidden') {
+        // Usuário está saindo desta aba (ex: indo para a Vercel) -> Salva tudo imediatamente!
+        if (hasPendingLocalChangesRef.current) {
+          flushPushToSupabase();
+        }
+      } else if (document.visibilityState === 'visible') {
+        // Usuário voltou para a aba
+        if (hasPendingLocalChangesRef.current) {
+          // Se ainda tem alteração pendente de envio, salva na nuvem primeiro!
+          flushPushToSupabase();
+        } else if (!isSyncInProgressRef.current) {
+          // Sem pendências locais: atualiza com as novidades da nuvem
+          syncWithSupabaseRef.current('pull');
+        }
       }
     };
+
     window.addEventListener('visibilitychange', handleVisibilityOrFocus);
     window.addEventListener('focus', handleVisibilityOrFocus);
+    window.addEventListener('pagehide', handleVisibilityOrFocus);
     return () => {
       window.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
+      window.removeEventListener('pagehide', handleVisibilityOrFocus);
     };
-  }, [supabaseAutoSyncEnabled, syncWithSupabase]);
+  }, [supabaseAutoSyncEnabled, flushPushToSupabase]);
 
-  // Sincronização inicial ao carregar a aplicação
+  // Sincronização inicial ao carregar a aplicação (apenas 1 execução no montamento)
   useEffect(() => {
     if (isSupabaseConfigured()) {
       setIsSupabaseConnected(true);
-      // Pequeno timeout para permitir que a UI inicialize
       const initialTimer = setTimeout(() => {
-        syncWithSupabase('both');
-      }, 500);
+        syncWithSupabaseRef.current('pull');
+      }, 350);
       return () => clearTimeout(initialTimer);
+    } else {
+      hasCompletedInitialPullRef.current = true;
     }
   }, []);
 
-  // Automatic Debounced Push on Local Edits (se configurado, envia alterações locais em 2s)
-  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Automatic Debounced Push on Local Edits: só dispara quando HOUVER alteração real do usuário
   useEffect(() => {
-    notifySaved(false);
-
-    if (!isSupabaseConfigured()) {
+    if (!isSupabaseConfigured() || !hasCompletedInitialPullRef.current) {
       return;
     }
 
+    const currentHash = computeDataHash({
+      transactions: transactionsRef.current,
+      cards: cardsRef.current,
+      cardSubscriptions: cardSubscriptionsRef.current,
+      cofrinhos: cofrinhosRef.current,
+      cofrinhoMovements: cofrinhoMovementsRef.current,
+      installmentPurchases: installmentPurchasesRef.current,
+      groceryTrips: groceryTripsRef.current,
+      groceryPlansByMonth: groceryPlansByMonthRef.current,
+      shoppingLists: shoppingListsRef.current,
+      stockItems: stockItemsRef.current,
+      cestaBasicaRecords: cestaBasicaRecordsRef.current,
+      salarySettings: salarySettingsRef.current,
+      emergencySettings: emergencySettingsRef.current,
+      houseFundSettings: houseFundSettingsRef.current,
+      futureRentSettings: futureRentSettingsRef.current,
+      globalCofrinhoSettings: globalCofrinhoSettingsRef.current,
+      closingChecklists: closingChecklistsRef.current,
+      investmentContributions: investmentContributionsRef.current,
+      emergencyContributions: emergencyContributionsRef.current,
+      renovationExpenses: renovationExpensesRef.current,
+    });
+
+    // Se o estado atual é exatamente idêntico ao que já está no Supabase, interrompe aqui!
+    if (currentHash === lastSyncedHashRef.current) {
+      return;
+    }
+
+    // Houve uma alteração real realizada pelo usuário
+    hasPendingLocalChangesRef.current = true;
     setSaveStatus('saving');
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
 
-    syncTimeoutRef.current = setTimeout(async () => {
-      try {
-        const checklistsMap: Record<string, any> = {};
-        closingChecklists.forEach((c) => {
-          checklistsMap[c.monthKey] = c;
-        });
-
-        const allPlans = Object.values(groceryPlansByMonth);
-        const res = await pushLocalDataToSupabase({
-          cards,
-          transactions,
-          installmentPurchases,
-          cardSubscriptions,
-          groceryTrips,
-          groceryMonthPlans: allPlans.length > 0 ? allPlans : [groceryPlan],
-          shoppingLists,
-          stockItems,
-          cestaBasicaRecords,
-          cofrinhos,
-          cofrinhoMovements,
-          emergencyContributions,
-          investmentContributions,
-          renovationExpenses,
-          monthlyClosingChecklists: checklistsMap,
-          salarySettings,
-          emergencySettings,
-          houseFundSettings,
-          futureRentSettings,
-          globalCofrinhoSettings,
-        });
-
-        if (res.success) {
-          notifySaved(true);
-          const nowTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          setSupabaseLastSyncTime(nowTime);
-          setSupabaseSyncStatus('success');
-        } else {
-          notifySaved(false);
-        }
-      } catch (e) {
-        console.warn('Auto-sync Supabase skipped:', e);
-        notifySaved(false);
-      }
-    }, 2500);
+    syncTimeoutRef.current = setTimeout(() => {
+      performPushToSupabase(currentHash);
+    }, 800);
 
     return () => {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     };
   }, [
+    computeDataHash,
+    performPushToSupabase,
     transactions,
     cards,
     cardSubscriptions,
@@ -1603,7 +1906,6 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     investmentContributions,
     emergencyContributions,
     renovationExpenses,
-    notifySaved,
   ]);
 
   // Demo status check
@@ -1622,6 +1924,33 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [transactions, cards, cardSubscriptions, cofrinhos, installmentPurchases, groceryTrips, investmentContributions, emergencyContributions, renovationExpenses]);
 
   const clearDemoData = () => {
+    // Coleta IDs de itens de demonstração para remoção imediata no Supabase
+    const demoTxIds = transactionsRef.current.filter((t) => t.isDemo).map((t) => t.id);
+    const demoCardIds = cardsRef.current.filter((c) => c.isDemo).map((c) => c.id);
+    const demoSubIds = cardSubscriptionsRef.current.filter((s) => s.isDemo).map((s) => s.id);
+    const demoCofIds = cofrinhosRef.current.filter((c) => c.isDemo).map((c) => c.id);
+    const demoInstIds = installmentPurchasesRef.current.filter((i) => i.isDemo).map((i) => i.id);
+    const demoTripIds = groceryTripsRef.current.filter((g) => g.isDemo).map((g) => g.id);
+    const demoListIds = shoppingListsRef.current.filter((l) => l.isDemo).map((l) => l.id);
+    const demoStockIds = stockItemsRef.current.filter((s) => s.isDemo).map((s) => s.id);
+    const demoCestaIds = cestaBasicaRecordsRef.current.filter((c) => c.isDemo).map((c) => c.id);
+    const demoInvIds = investmentContributionsRef.current.filter((inv) => inv.isDemo).map((inv) => inv.id);
+    const demoEmerIds = emergencyContributionsRef.current.filter((e) => e.isDemo).map((e) => e.id);
+    const demoRenoIds = renovationExpensesRef.current.filter((r) => r.isDemo).map((r) => r.id);
+
+    if (demoTxIds.length > 0) deleteItemFromSupabase('transactions', demoTxIds);
+    if (demoCardIds.length > 0) deleteItemFromSupabase('credit_cards', demoCardIds);
+    if (demoSubIds.length > 0) deleteItemFromSupabase('card_subscriptions', demoSubIds);
+    if (demoCofIds.length > 0) deleteItemFromSupabase('cofrinhos', demoCofIds);
+    if (demoInstIds.length > 0) deleteItemFromSupabase('installment_purchases', demoInstIds);
+    if (demoTripIds.length > 0) deleteItemFromSupabase('grocery_trips', demoTripIds);
+    if (demoListIds.length > 0) deleteItemFromSupabase('shopping_lists', demoListIds);
+    if (demoStockIds.length > 0) deleteItemFromSupabase('stock_items', demoStockIds);
+    if (demoCestaIds.length > 0) deleteItemFromSupabase('cesta_basica_records', demoCestaIds);
+    if (demoInvIds.length > 0) deleteItemFromSupabase('investment_contributions', demoInvIds);
+    if (demoEmerIds.length > 0) deleteItemFromSupabase('emergency_contributions', demoEmerIds);
+    if (demoRenoIds.length > 0) deleteItemFromSupabase('renovation_expenses', demoRenoIds);
+
     setTransactions((prev) => prev.filter((t) => !t.isDemo));
     setCards((prev) => prev.filter((c) => !c.isDemo));
     setCardSubscriptions((prev) => prev.filter((s) => !s.isDemo));
@@ -1635,6 +1964,23 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     setInvestmentContributions((prev) => prev.filter((inv) => !inv.isDemo));
     setEmergencyContributions((prev) => prev.filter((e) => !e.isDemo));
     setRenovationExpenses((prev) => prev.filter((r) => !r.isDemo));
+
+    cardsRef.current = cardsRef.current.filter((c) => !c.isDemo);
+    transactionsRef.current = transactionsRef.current.filter((t) => !t.isDemo);
+    cardSubscriptionsRef.current = cardSubscriptionsRef.current.filter((s) => !s.isDemo);
+    cofrinhosRef.current = cofrinhosRef.current.filter((cof) => !cof.isDemo);
+    cofrinhoMovementsRef.current = cofrinhoMovementsRef.current.filter((cm) => !cm.isDemo);
+    installmentPurchasesRef.current = installmentPurchasesRef.current.filter((i) => !i.isDemo);
+    groceryTripsRef.current = groceryTripsRef.current.filter((g) => !g.isDemo);
+    shoppingListsRef.current = shoppingListsRef.current.filter((l) => !l.isDemo);
+    stockItemsRef.current = stockItemsRef.current.filter((s) => !s.isDemo);
+    cestaBasicaRecordsRef.current = cestaBasicaRecordsRef.current.filter((c) => !c.isDemo);
+    investmentContributionsRef.current = investmentContributionsRef.current.filter((inv) => !inv.isDemo);
+    emergencyContributionsRef.current = emergencyContributionsRef.current.filter((e) => !e.isDemo);
+    renovationExpensesRef.current = renovationExpensesRef.current.filter((r) => !r.isDemo);
+
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const restoreDemoData = () => {
@@ -1679,18 +2025,24 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteTransaction = (id: string) => {
-    const tx = transactions.find((t) => t.id === id);
+    deleteItemFromSupabase('transactions', id);
+    const tx = transactionsRef.current.find((t) => t.id === id);
+    setTransactions((prev) => prev.filter((t) => t.id !== id));
+    transactionsRef.current = transactionsRef.current.filter((t) => t.id !== id);
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+
     if (!tx) {
-      setTransactions((prev) => prev.filter((t) => t.id !== id));
+      hasPendingLocalChangesRef.current = true;
+      setTimeout(() => flushPushToSupabase(), 40);
       return;
     }
 
-    // 1. Excluir lançamento
-    setTransactions((prev) => prev.filter((t) => t.id !== id));
-
     // 2. Se for compra de supermercado vinculada, excluir registro de supermercado
     if (tx.groceryTripId) {
+      deleteItemFromSupabase('grocery_trips', tx.groceryTripId);
       setGroceryTrips((prev) => prev.filter((g) => g.id !== tx.groceryTripId));
+      groceryTripsRef.current = groceryTripsRef.current.filter((g) => g.id !== tx.groceryTripId);
+      safeStorageSet(STORAGE_KEYS.GROCERY, groceryTripsRef.current);
     }
 
     // 3. Sincronização com Cofrinhos & Metas: encontrar movimentações correspondentes
@@ -1725,11 +2077,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
 
     if (relatedMovements.length > 0) {
-      const movementIdsToRemove = new Set(relatedMovements.map((m) => m.id));
+      const movementIdsToRemove = new Set<string>(relatedMovements.map((m) => m.id));
 
       // Reverter saldos e rendimentos dos cofrinhos afetados
-      setCofrinhos((prev) =>
-        prev.map((c) => {
+      setCofrinhos((prev) => {
+        const next = prev.map((c) => {
           const movsForCof = relatedMovements.filter((m) => m.cofrinhoId === c.id);
           if (movsForCof.length === 0) return c;
 
@@ -1756,16 +2108,22 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             accumulatedYield: Math.max(0, c.accumulatedYield + deltaAccYield),
             isDemo: false,
           };
-        })
-      );
+        });
+        cofrinhosRef.current = next;
+        safeStorageSet(STORAGE_KEYS.COFRINHOS, next);
+        return next;
+      });
 
       // Excluir movimentações do cofrinho
+      deleteItemFromSupabase('cofrinho_movements', Array.from(movementIdsToRemove));
       setCofrinhoMovements((prev) => prev.filter((m) => !movementIdsToRemove.has(m.id)));
+      cofrinhoMovementsRef.current = cofrinhoMovementsRef.current.filter((m) => !movementIdsToRemove.has(m.id));
+      safeStorageSet(STORAGE_KEYS.COFRINHO_MOVEMENTS, cofrinhoMovementsRef.current);
     }
 
     // 4. Limpar contribuições de investimentos correlacionadas
-    setInvestmentContributions((prev) =>
-      prev.filter((inv) => {
+    setInvestmentContributions((prev) => {
+      const next = prev.filter((inv) => {
         if (tx.investmentContributionId && inv.id === tx.investmentContributionId) return false;
         if (tx.id === 'tx-inv-' + inv.id) return false;
         if (inv.transactionId === tx.id) return false;
@@ -1778,12 +2136,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           return false;
         }
         return true;
-      })
-    );
+      });
+      investmentContributionsRef.current = next;
+      safeStorageSet(STORAGE_KEYS.INVESTMENTS, next);
+      return next;
+    });
 
     // 5. Limpar contribuições de reserva de emergência correlacionadas
-    setEmergencyContributions((prev) =>
-      prev.filter((efc) => {
+    setEmergencyContributions((prev) => {
+      const next = prev.filter((efc) => {
         if (tx.emergencyContributionId && efc.id === tx.emergencyContributionId) return false;
         if (efc.transactionId === tx.id) return false;
         if (tx.id === 'tx-reserva-ricardo' && efc.person === 'Ricardo') return false;
@@ -1798,8 +2159,11 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
           return false;
         }
         return true;
-      })
-    );
+      });
+      emergencyContributionsRef.current = next;
+      safeStorageSet(STORAGE_KEYS.EMERGENCY, next);
+      return next;
+    });
 
     // 6. Resetar status do aporte obrigatório do mês se for aporte da reserva
     if (
@@ -1818,6 +2182,10 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     ) {
       setMonthlyAporteStatus('Ellen', 'programado');
     }
+
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const toggleTransactionPaid = (id: string) => {
@@ -1842,10 +2210,62 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteCard = (id: string) => {
+    deleteItemFromSupabase('credit_cards', id);
     setCards((prev) => prev.filter((c) => c.id !== id));
+    cardsRef.current = cardsRef.current.filter((c) => c.id !== id);
+
+    // Exclui assinaturas vinculadas a este cartão e desvincula suas transações
+    const subsToRemove = cardSubscriptionsRef.current.filter((s) => s.cardId === id);
+    const subIdsToRemove = new Set<string>(subsToRemove.map((s) => s.id));
+    if (subIdsToRemove.size > 0) {
+      deleteItemFromSupabase('card_subscriptions', Array.from(subIdsToRemove));
+      setCardSubscriptions((prev) => prev.filter((s) => !subIdsToRemove.has(s.id)));
+      cardSubscriptionsRef.current = cardSubscriptionsRef.current.filter((s) => !subIdsToRemove.has(s.id));
+    }
+
+    // Desvincula cartão e assinaturas excluídas de todas as transações locais
     setTransactions((prev) =>
-      prev.map((t) => (t.cardId === id ? { ...t, cardId: undefined } : t))
+      prev.map((t) => {
+        const matchesCard = t.cardId === id;
+        const matchesSub = t.subscriptionId && subIdsToRemove.has(t.subscriptionId);
+        if (matchesCard || matchesSub) {
+          return {
+            ...t,
+            cardId: matchesCard ? undefined : t.cardId,
+            subscriptionId: matchesSub ? undefined : t.subscriptionId,
+            isCardSubscription: matchesSub ? false : t.isCardSubscription,
+          };
+        }
+        return t;
+      })
     );
+    transactionsRef.current = transactionsRef.current.map((t) => {
+      const matchesCard = t.cardId === id;
+      const matchesSub = t.subscriptionId && subIdsToRemove.has(t.subscriptionId);
+      if (matchesCard || matchesSub) {
+        return {
+          ...t,
+          cardId: matchesCard ? undefined : t.cardId,
+          subscriptionId: matchesSub ? undefined : t.subscriptionId,
+          isCardSubscription: matchesSub ? false : t.isCardSubscription,
+        };
+      }
+      return t;
+    });
+
+    // Desvincula parcelamentos desse cartão
+    setInstallmentPurchases((prev) =>
+      prev.map((ip) => (ip.cardId === id ? { ...ip, cardId: undefined } : ip))
+    );
+    installmentPurchasesRef.current = installmentPurchasesRef.current.map((ip) => (ip.cardId === id ? { ...ip, cardId: undefined } : ip));
+
+    safeStorageSet(STORAGE_KEYS.CARDS, cardsRef.current);
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+    safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, cardSubscriptionsRef.current);
+    safeStorageSet(STORAGE_KEYS.INSTALLMENTS, installmentPurchasesRef.current);
+
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   // Installments CRUD
@@ -1899,14 +2319,37 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteInstallmentPurchase = (id: string) => {
+    deleteItemFromSupabase('installment_purchases', id);
     setInstallmentPurchases((prev) => prev.filter((i) => i.id !== id));
+    installmentPurchasesRef.current = installmentPurchasesRef.current.filter((i) => i.id !== id);
+    const relatedTxs = transactionsRef.current.filter((t) => t.installmentInfo?.purchaseId === id);
+    if (relatedTxs.length > 0) {
+      deleteItemFromSupabase('transactions', relatedTxs.map((t) => t.id));
+    }
     setTransactions((prev) =>
       prev.filter((t) => t.installmentInfo?.purchaseId !== id)
     );
+    transactionsRef.current = transactionsRef.current.filter((t) => t.installmentInfo?.purchaseId !== id);
+
+    safeStorageSet(STORAGE_KEYS.INSTALLMENTS, installmentPurchasesRef.current);
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const deleteInstallmentFromMonth = (purchaseId: string, fromCurrentInstallment: number) => {
     // Excluir a parcela atual e todas as parcelas subsequentes (nos meses seguintes)
+    const txsToRemove = transactionsRef.current.filter((t) => {
+      if (t.installmentInfo?.purchaseId === purchaseId) {
+        return (t.installmentInfo.current || 1) >= fromCurrentInstallment;
+      }
+      return false;
+    });
+    if (txsToRemove.length > 0) {
+      deleteItemFromSupabase('transactions', txsToRemove.map((t) => t.id));
+    }
+
     setTransactions((prev) =>
       prev.filter((t) => {
         if (t.installmentInfo?.purchaseId === purchaseId) {
@@ -1915,14 +2358,22 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         return true;
       })
     );
+    transactionsRef.current = transactionsRef.current.filter((t) => {
+      if (t.installmentInfo?.purchaseId === purchaseId) {
+        return (t.installmentInfo.current || 1) < fromCurrentInstallment;
+      }
+      return true;
+    });
 
     // Se for a partir da 1ª parcela, exclui a compra parcelada por completo
     if (fromCurrentInstallment <= 1) {
+      deleteItemFromSupabase('installment_purchases', purchaseId);
       setInstallmentPurchases((prev) => prev.filter((i) => i.id !== purchaseId));
+      installmentPurchasesRef.current = installmentPurchasesRef.current.filter((i) => i.id !== purchaseId);
     } else {
       // Se for a partir de uma parcela intermediária, ajusta o total de parcelas da compra
-      setInstallmentPurchases((prev) =>
-        prev.map((inst) => {
+      setInstallmentPurchases((prev) => {
+        const next = prev.map((inst) => {
           if (inst.id === purchaseId) {
             const newTotal = fromCurrentInstallment - 1;
             return {
@@ -1934,9 +2385,17 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             };
           }
           return inst;
-        })
-      );
+        });
+        installmentPurchasesRef.current = next;
+        return next;
+      });
     }
+
+    safeStorageSet(STORAGE_KEYS.INSTALLMENTS, installmentPurchasesRef.current);
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const updateInstallmentPurchase = (id: string, updated: Partial<InstallmentPurchase>) => {
@@ -2019,10 +2478,23 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteCardSubscription = (id: string) => {
+    deleteItemFromSupabase('card_subscriptions', id);
     setCardSubscriptions((prev) => prev.filter((sub) => sub.id !== id));
+    cardSubscriptionsRef.current = cardSubscriptionsRef.current.filter((sub) => sub.id !== id);
+    const relatedTxs = transactionsRef.current.filter((t) => t.subscriptionId === id || t.id === id || t.id.includes(id));
+    if (relatedTxs.length > 0) {
+      deleteItemFromSupabase('transactions', relatedTxs.map((t) => t.id));
+    }
     setTransactions((prev) =>
       prev.filter((t) => t.subscriptionId !== id && t.id !== id && !t.id.includes(id))
     );
+    transactionsRef.current = transactionsRef.current.filter((t) => t.subscriptionId !== id && t.id !== id && !t.id.includes(id));
+
+    safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, cardSubscriptionsRef.current);
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   // Cofrinhos CRUD
@@ -2102,8 +2574,29 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteCofrinho = (id: string) => {
+    deleteItemFromSupabase('cofrinhos', id);
+    const relatedMovIds = cofrinhoMovementsRef.current.filter((m) => m.cofrinhoId === id).map((m) => m.id);
+    if (relatedMovIds.length > 0) {
+      deleteItemFromSupabase('cofrinho_movements', relatedMovIds);
+    }
     setCofrinhos((prev) => prev.filter((c) => c.id !== id));
+    cofrinhosRef.current = cofrinhosRef.current.filter((c) => c.id !== id);
     setCofrinhoMovements((prev) => prev.filter((m) => m.cofrinhoId !== id));
+    cofrinhoMovementsRef.current = cofrinhoMovementsRef.current.filter((m) => m.cofrinhoId !== id);
+
+    setTransactions((prev) =>
+      prev.map((t) => (t.cofrinhoId === id ? { ...t, cofrinhoId: undefined, cofrinhoMovementId: undefined } : t))
+    );
+    transactionsRef.current = transactionsRef.current.map((t) =>
+      (t.cofrinhoId === id ? { ...t, cofrinhoId: undefined, cofrinhoMovementId: undefined } : t)
+    );
+
+    safeStorageSet(STORAGE_KEYS.COFRINHOS, cofrinhosRef.current);
+    safeStorageSet(STORAGE_KEYS.COFRINHO_MOVEMENTS, cofrinhoMovementsRef.current);
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const addCofrinhoMovement = (
@@ -2156,8 +2649,8 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     const mov = cofrinhoMovements.find((m) => m.id === id);
     if (mov) {
       // 1. Reverter saldos e rendimentos do cofrinho
-      setCofrinhos((prev) =>
-        prev.map((c) => {
+      setCofrinhos((prev) => {
+        const next = prev.map((c) => {
           if (c.id === mov.cofrinhoId) {
             const delta = mov.type === 'retirada' ? mov.amount : -mov.amount;
             const newYield =
@@ -2173,12 +2666,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             };
           }
           return c;
-        })
-      );
+        });
+        cofrinhosRef.current = next;
+        safeStorageSet(STORAGE_KEYS.COFRINHOS, next);
+        return next;
+      });
 
       // 2. Sincronizar exclusão com a lista de lançamentos (Transactions)
-      setTransactions((prev) =>
-        prev.filter((t) => {
+      setTransactions((prev) => {
+        const next = prev.filter((t) => {
           if (mov.transactionId && t.id === mov.transactionId) return false;
           if (t.cofrinhoMovementId && t.cofrinhoMovementId === id) return false;
           if (id === 'cm-1' && t.id === 'tx-reserva-ricardo') return false;
@@ -2192,20 +2688,36 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
             }
           }
           return true;
-        })
-      );
+        });
+        transactionsRef.current = next;
+        safeStorageSet(STORAGE_KEYS.TRANSACTIONS, next);
+        return next;
+      });
 
       // 3. Excluir contribuição de reserva ou investimentos vinculada
       if (mov.emergencyContributionId) {
-        setEmergencyContributions((prev) => prev.filter((e) => e.id !== mov.emergencyContributionId));
+        setEmergencyContributions((prev) => {
+          const next = prev.filter((e) => e.id !== mov.emergencyContributionId);
+          emergencyContributionsRef.current = next;
+          safeStorageSet(STORAGE_KEYS.EMERGENCY, next);
+          return next;
+        });
       } else if (mov.cofrinhoId === 'cof-reserva' || id === 'cm-1' || id === 'cm-2') {
-        setEmergencyContributions((prev) =>
-          prev.filter((e) => !(Math.abs(e.amount - mov.amount) < 0.01 && e.date === mov.date && e.person === mov.person))
-        );
+        setEmergencyContributions((prev) => {
+          const next = prev.filter((e) => !(Math.abs(e.amount - mov.amount) < 0.01 && e.date === mov.date && e.person === mov.person));
+          emergencyContributionsRef.current = next;
+          safeStorageSet(STORAGE_KEYS.EMERGENCY, next);
+          return next;
+        });
       }
 
       if (mov.investmentContributionId) {
-        setInvestmentContributions((prev) => prev.filter((inv) => inv.id !== mov.investmentContributionId));
+        setInvestmentContributions((prev) => {
+          const next = prev.filter((inv) => inv.id !== mov.investmentContributionId);
+          investmentContributionsRef.current = next;
+          safeStorageSet(STORAGE_KEYS.INVESTMENTS, next);
+          return next;
+        });
       }
 
       // 4. Resetar status se for aporte mensal da reserva
@@ -2216,7 +2728,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         setMonthlyAporteStatus('Ellen', 'programado');
       }
     }
+    deleteItemFromSupabase('cofrinho_movements', id);
     setCofrinhoMovements((prev) => prev.filter((m) => m.id !== id));
+    cofrinhoMovementsRef.current = cofrinhoMovementsRef.current.filter((m) => m.id !== id);
+    safeStorageSet(STORAGE_KEYS.COFRINHO_MOVEMENTS, cofrinhoMovementsRef.current);
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const updateGlobalCofrinhoSettings = (settings: Partial<GlobalCofrinhoSettings>) => {
@@ -2490,8 +3007,19 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteGroceryTrip = (id: string) => {
+    deleteItemFromSupabase('grocery_trips', id);
+    const relatedTxIds = transactionsRef.current.filter((t) => t.groceryTripId === id).map((t) => t.id);
+    if (relatedTxIds.length > 0) {
+      deleteItemFromSupabase('transactions', relatedTxIds);
+    }
     setGroceryTrips((prev) => prev.filter((g) => g.id !== id));
+    groceryTripsRef.current = groceryTripsRef.current.filter((g) => g.id !== id);
     setTransactions((prev) => prev.filter((t) => t.groceryTripId !== id));
+    transactionsRef.current = transactionsRef.current.filter((t) => t.groceryTripId !== id);
+    safeStorageSet(STORAGE_KEYS.GROCERY, groceryTripsRef.current);
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const setGroceryPlanningMode = (mode: 'opcao_a' | 'opcao_b') => {
@@ -2611,7 +3139,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteShoppingList = (id: string) => {
+    deleteItemFromSupabase('shopping_lists', id);
     setShoppingLists((prev) => prev.filter((l) => l.id !== id));
+    shoppingListsRef.current = shoppingListsRef.current.filter((l) => l.id !== id);
+    safeStorageSet(STORAGE_KEYS.SHOPPING_LISTS, shoppingListsRef.current);
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const copyShoppingList = (id: string) => {
@@ -2760,7 +3293,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteStockItem = (id: string) => {
+    deleteItemFromSupabase('stock_items', id);
     setStockItems((prev) => prev.filter((s) => s.id !== id));
+    stockItemsRef.current = stockItemsRef.current.filter((s) => s.id !== id);
+    safeStorageSet(STORAGE_KEYS.STOCK_ITEMS, stockItemsRef.current);
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   // Cesta Basica CRUD
@@ -2793,7 +3331,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteCestaBasicaRecord = (id: string) => {
+    deleteItemFromSupabase('cesta_basica_records', id);
     setCestaBasicaRecords((prev) => prev.filter((c) => c.id !== id));
+    cestaBasicaRecordsRef.current = cestaBasicaRecordsRef.current.filter((c) => c.id !== id);
+    safeStorageSet(STORAGE_KEYS.CESTA_BASICA, cestaBasicaRecordsRef.current);
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   // Salary Settings CRUD
@@ -2858,14 +3401,27 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteInvestmentContribution = (id: string) => {
+    deleteItemFromSupabase('investment_contributions', id);
     const inv = investmentContributions.find((item) => item.id === id);
+    const relatedTxIds = transactionsRef.current
+      .filter((t) => t.id === 'tx-inv-' + id || t.investmentContributionId === id || (inv?.transactionId && t.id === inv.transactionId))
+      .map((t) => t.id);
+    if (relatedTxIds.length > 0) {
+      deleteItemFromSupabase('transactions', relatedTxIds);
+    }
     setInvestmentContributions((prev) => prev.filter((item) => item.id !== id));
+    investmentContributionsRef.current = investmentContributionsRef.current.filter((item) => item.id !== id);
     setTransactions((prev) =>
       prev.filter((t) => t.id !== 'tx-inv-' + id && t.investmentContributionId !== id && (!inv?.transactionId || t.id !== inv.transactionId))
     );
+    transactionsRef.current = transactionsRef.current.filter((t) => t.id !== 'tx-inv-' + id && t.investmentContributionId !== id && (!inv?.transactionId || t.id !== inv.transactionId));
     if (inv?.cofrinhoMovementId) {
       deleteCofrinhoMovement(inv.cofrinhoMovementId);
     }
+    safeStorageSet(STORAGE_KEYS.INVESTMENTS, investmentContributionsRef.current);
+    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const addEmergencyContribution = (efc: Omit<EmergencyFundContribution, 'id'>) => {
@@ -2901,14 +3457,22 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteEmergencyContribution = (id: string) => {
+    deleteItemFromSupabase('emergency_contributions', id);
     const efc = emergencyContributions.find((e) => e.id === id);
-    setEmergencyContributions((prev) => prev.filter((e) => e.id !== id));
     if (efc?.transactionId) {
+      deleteItemFromSupabase('transactions', efc.transactionId);
       setTransactions((prev) => prev.filter((t) => t.id !== efc.transactionId));
+      transactionsRef.current = transactionsRef.current.filter((t) => t.id !== efc.transactionId);
+      safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
     }
     if (efc?.cofrinhoMovementId) {
       deleteCofrinhoMovement(efc.cofrinhoMovementId);
     }
+    setEmergencyContributions((prev) => prev.filter((e) => e.id !== id));
+    emergencyContributionsRef.current = emergencyContributionsRef.current.filter((e) => e.id !== id);
+    safeStorageSet(STORAGE_KEYS.EMERGENCY, emergencyContributionsRef.current);
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const updateEmergencySettings = (updated: Partial<EmergencyFundSettings>) => {
@@ -3251,7 +3815,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const deleteRenovationExpense = (id: string) => {
+    deleteItemFromSupabase('renovation_expenses', id);
     setRenovationExpenses((prev) => prev.filter((r) => r.id !== id));
+    renovationExpensesRef.current = renovationExpensesRef.current.filter((r) => r.id !== id);
+    safeStorageSet(STORAGE_KEYS.RENOVATION_EXPENSES, renovationExpensesRef.current);
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const updateFutureRentSettings = (settings: Partial<FutureRentSettings>) => {

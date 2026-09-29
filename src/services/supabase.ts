@@ -62,6 +62,12 @@ export const getSupabaseCredentials = (): {
     try {
       localStorage.setItem(SUPABASE_STORAGE_KEYS.URL, fromUrl.url);
       localStorage.setItem(SUPABASE_STORAGE_KEYS.ANON_KEY, fromUrl.anonKey);
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('supabase_url');
+        cleanUrl.searchParams.delete('supabase_anon_key');
+        window.history.replaceState({}, document.title, cleanUrl.toString());
+      }
     } catch {}
     return {
       url: fromUrl.url,
@@ -216,7 +222,101 @@ export const testSupabaseConnection = async (): Promise<{ success: boolean; mess
 };
 
 /**
- * Envia todos os dados locais para o Supabase (Upsert completo)
+ * Remove com segurança chaves estrangeiras vinculadas antes de deletar registros pais
+ */
+async function cleanForeignKeysBeforeDelete(
+  client: SupabaseClient,
+  tableName: string,
+  ids: string[]
+): Promise<void> {
+  if (ids.length === 0) return;
+  try {
+    if (tableName === 'credit_cards') {
+      // 1. Remove/desvincula referências em transactions
+      await client.from('transactions').update({ card_id: null }).in('card_id', ids);
+      // 2. Remove/desvincula referências em installment_purchases
+      await client.from('installment_purchases').update({ card_id: null }).in('card_id', ids);
+      // 3. Localiza assinaturas vinculadas a estes cartões
+      const { data: subs } = await client.from('card_subscriptions').select('id').in('card_id', ids);
+      if (subs && subs.length > 0) {
+        const subIds = subs.map((s: any) => s.id);
+        await client.from('transactions').update({ subscription_id: null, is_card_subscription: false }).in('subscription_id', subIds);
+        await client.from('card_subscriptions').delete().in('id', subIds);
+      }
+    } else if (tableName === 'cofrinhos') {
+      // Desvincula lançamentos e apaga movimentações filhas
+      await client.from('transactions').update({ cofrinho_id: null, cofrinho_movement_id: null }).in('cofrinho_id', ids);
+      await client.from('cofrinho_movements').update({ destination_cofrinho_id: null }).in('destination_cofrinho_id', ids);
+      await client.from('cofrinho_movements').delete().in('cofrinho_id', ids);
+    } else if (tableName === 'cofrinho_movements') {
+      await client.from('transactions').update({ cofrinho_movement_id: null }).in('cofrinho_movement_id', ids);
+    } else if (tableName === 'grocery_trips') {
+      await client.from('transactions').update({ grocery_trip_id: null }).in('grocery_trip_id', ids);
+    } else if (tableName === 'card_subscriptions') {
+      await client.from('transactions').update({ subscription_id: null, is_card_subscription: false }).in('subscription_id', ids);
+    }
+  } catch (err) {
+    console.warn(`[Supabase] Aviso ao limpar chaves estrangeiras para ${tableName}:`, err);
+  }
+}
+
+/**
+ * Remove registros do Supabase que não existem mais localmente
+ */
+async function syncTableDeletions(
+  client: SupabaseClient,
+  tableName: string,
+  localIds: Set<string>
+): Promise<number> {
+  try {
+    const { data, error } = await client.from(tableName).select('id');
+    if (error || !data) return 0;
+    const toDelete = data.map((r: any) => r.id).filter((id: string) => !localIds.has(id));
+    if (toDelete.length > 0) {
+      for (let i = 0; i < toDelete.length; i += 50) {
+        const chunk = toDelete.slice(i, i + 50);
+        await cleanForeignKeysBeforeDelete(client, tableName, chunk);
+        const { error: delErr } = await client.from(tableName).delete().in('id', chunk);
+        if (delErr) {
+          console.warn(`[Supabase] Erro ao deletar registros de ${tableName}:`, delErr.message);
+        }
+      }
+      return toDelete.length;
+    }
+    return 0;
+  } catch (err) {
+    console.warn(`[Supabase] Erro ao sincronizar remoções de ${tableName}:`, err);
+    return 0;
+  }
+}
+
+/**
+ * Deleta um ou mais registros imediatamente do Supabase por ID
+ */
+export const deleteItemFromSupabase = async (
+  tableName: string,
+  idOrIds: string | string[]
+): Promise<boolean> => {
+  const client = getSupabaseClient();
+  if (!client) return false;
+  try {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    if (ids.length === 0) return true;
+    await cleanForeignKeysBeforeDelete(client, tableName, ids);
+    const { error } = await client.from(tableName).delete().in('id', ids);
+    if (error) {
+      console.warn(`[Supabase] Erro ao deletar de ${tableName}:`, error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[Supabase] Falha ao deletar de ${tableName}:`, err);
+    return false;
+  }
+};
+
+/**
+ * Envia todos os dados locais para o Supabase (Upsert completo com sincronização de remoções)
  */
 export const pushLocalDataToSupabase = async (payload: {
   cards: CreditCard[];
@@ -260,7 +360,9 @@ export const pushLocalDataToSupabase = async (payload: {
     if (errSettings) throw new Error(`app_settings: ${errSettings.message}`);
     details.settings = settingsRows.length;
 
-    // 2. Credit Cards
+    // 2. Credit Cards (Sincroniza remoções e atualiza restantes)
+    const localCardIds = new Set(payload.cards.map((c) => c.id));
+    await syncTableDeletions(client, 'credit_cards', localCardIds);
     if (payload.cards.length > 0) {
       const cardRows = payload.cards.map((c) => ({
         id: c.id,
@@ -279,6 +381,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 3. Installment Purchases
+    const localInstIds = new Set(payload.installmentPurchases.map((ip) => ip.id));
+    await syncTableDeletions(client, 'installment_purchases', localInstIds);
     if (payload.installmentPurchases.length > 0) {
       const instRows = payload.installmentPurchases.map((ip) => ({
         id: ip.id,
@@ -306,6 +410,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 4. Card Subscriptions
+    const localSubIds = new Set(payload.cardSubscriptions.map((s) => s.id));
+    await syncTableDeletions(client, 'card_subscriptions', localSubIds);
     if (payload.cardSubscriptions.length > 0) {
       const subRows = payload.cardSubscriptions.map((s) => ({
         id: s.id,
@@ -313,7 +419,7 @@ export const pushLocalDataToSupabase = async (payload: {
         description: s.description,
         amount: s.amount,
         person: s.person,
-        card_id: s.cardId,
+        card_id: s.cardId ? s.cardId : null,
         category: s.category,
         billing_day: s.billingDay || null,
         start_month: s.startMonth || null,
@@ -329,6 +435,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 5. Transactions
+    const localTxIds = new Set(payload.transactions.map((t) => t.id));
+    await syncTableDeletions(client, 'transactions', localTxIds);
     if (payload.transactions.length > 0) {
       const txRows = payload.transactions.map((t) => ({
         id: t.id,
@@ -346,19 +454,18 @@ export const pushLocalDataToSupabase = async (payload: {
         payment_method: t.paymentMethod,
         account_or_pot: t.accountOrPot || null,
         notes: t.notes || null,
-        card_id: t.cardId || null,
+        card_id: t.cardId ? t.cardId : null,
         purchase_date: t.purchaseDate || null,
         installment_info: t.installmentInfo || null,
-        subscription_id: t.subscriptionId || null,
+        subscription_id: t.subscriptionId ? t.subscriptionId : null,
         is_card_subscription: Boolean(t.isCardSubscription),
-        grocery_trip_id: t.groceryTripId || null,
-        cofrinho_movement_id: t.cofrinhoMovementId || null,
-        cofrinho_id: t.cofrinhoId || null,
-        investment_contribution_id: t.investmentContributionId || null,
-        emergency_contribution_id: t.emergencyContributionId || null,
+        grocery_trip_id: t.groceryTripId ? t.groceryTripId : null,
+        cofrinho_movement_id: t.cofrinhoMovementId ? t.cofrinhoMovementId : null,
+        cofrinho_id: t.cofrinhoId ? t.cofrinhoId : null,
+        investment_contribution_id: t.investmentContributionId ? t.investmentContributionId : null,
+        emergency_contribution_id: t.emergencyContributionId ? t.emergencyContributionId : null,
         is_demo: Boolean(t.isDemo),
       }));
-      // Inserir em lotes de 50 para evitar limites de payload
       for (let i = 0; i < txRows.length; i += 50) {
         const chunk = txRows.slice(i, i + 50);
         const { error } = await client.from('transactions').upsert(chunk);
@@ -368,6 +475,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 6. Grocery Trips
+    const localTripIds = new Set(payload.groceryTrips.map((gt) => gt.id));
+    await syncTableDeletions(client, 'grocery_trips', localTripIds);
     if (payload.groceryTrips.length > 0) {
       const tripRows = payload.groceryTrips.map((gt) => ({
         id: gt.id,
@@ -414,7 +523,13 @@ export const pushLocalDataToSupabase = async (payload: {
       details.groceryMonthPlans = planRows.length;
     }
 
-    // 8. Cofrinhos
+    // 8. Cofrinho Movements (delete movements first before cofrinhos)
+    const localMovIds = new Set(payload.cofrinhoMovements.map((m) => m.id));
+    await syncTableDeletions(client, 'cofrinho_movements', localMovIds);
+
+    // 9. Cofrinhos
+    const localCofIds = new Set(payload.cofrinhos.map((c) => c.id));
+    await syncTableDeletions(client, 'cofrinhos', localCofIds);
     if (payload.cofrinhos.length > 0) {
       const cofRows = payload.cofrinhos.map((c) => ({
         id: c.id,
@@ -449,7 +564,6 @@ export const pushLocalDataToSupabase = async (payload: {
       details.cofrinhos = cofRows.length;
     }
 
-    // 9. Cofrinho Movements
     if (payload.cofrinhoMovements.length > 0) {
       const movRows = payload.cofrinhoMovements.map((m) => ({
         id: m.id,
@@ -462,10 +576,10 @@ export const pushLocalDataToSupabase = async (payload: {
         tax_amount: m.taxAmount || null,
         is_extraordinary_share: Boolean(m.isExtraordinaryShare),
         sub_purpose: m.subPurpose || null,
-        destination_cofrinho_id: m.destinationCofrinhoId || null,
-        transaction_id: m.transactionId || null,
-        emergency_contribution_id: m.emergencyContributionId || null,
-        investment_contribution_id: m.investmentContributionId || null,
+        destination_cofrinho_id: m.destinationCofrinhoId ? m.destinationCofrinhoId : null,
+        transaction_id: m.transactionId ? m.transactionId : null,
+        emergency_contribution_id: m.emergencyContributionId ? m.emergencyContributionId : null,
+        investment_contribution_id: m.investmentContributionId ? m.investmentContributionId : null,
         notes: m.notes || null,
         is_demo: Boolean(m.isDemo),
       }));
@@ -475,6 +589,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 10. Renovation Expenses
+    const localRenIds = new Set(payload.renovationExpenses.map((r) => r.id));
+    await syncTableDeletions(client, 'renovation_expenses', localRenIds);
     if (payload.renovationExpenses.length > 0) {
       const renRows = payload.renovationExpenses.map((r) => ({
         id: r.id,
@@ -497,6 +613,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 11. Shopping Lists
+    const localListIds = new Set(payload.shoppingLists.map((l) => l.id));
+    await syncTableDeletions(client, 'shopping_lists', localListIds);
     if (payload.shoppingLists && payload.shoppingLists.length > 0) {
       const listRows = payload.shoppingLists.map((l) => ({
         id: l.id,
@@ -513,6 +631,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 12. Stock Items
+    const localStockIds = new Set(payload.stockItems.map((s) => s.id));
+    await syncTableDeletions(client, 'stock_items', localStockIds);
     if (payload.stockItems && payload.stockItems.length > 0) {
       const stockRows = payload.stockItems.map((s) => ({
         id: s.id,
@@ -537,6 +657,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 13. Cesta Basica Records
+    const localCestaIds = new Set(payload.cestaBasicaRecords.map((cb) => cb.id));
+    await syncTableDeletions(client, 'cesta_basica_records', localCestaIds);
     if (payload.cestaBasicaRecords && payload.cestaBasicaRecords.length > 0) {
       const cestaRows = payload.cestaBasicaRecords.map((cb) => ({
         id: cb.id,
@@ -553,6 +675,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 14. Emergency Fund Contributions
+    const localEmerIds = new Set(payload.emergencyContributions.map((ec) => ec.id));
+    await syncTableDeletions(client, 'emergency_contributions', localEmerIds);
     if (payload.emergencyContributions && payload.emergencyContributions.length > 0) {
       const emerRows = payload.emergencyContributions.map((ec) => ({
         id: ec.id,
@@ -573,6 +697,8 @@ export const pushLocalDataToSupabase = async (payload: {
     }
 
     // 15. Investment Contributions
+    const localInvIds = new Set(payload.investmentContributions.map((ic) => ic.id));
+    await syncTableDeletions(client, 'investment_contributions', localInvIds);
     if (payload.investmentContributions && payload.investmentContributions.length > 0) {
       const invRows = payload.investmentContributions.map((ic) => ({
         id: ic.id,
@@ -625,6 +751,7 @@ export const pushLocalDataToSupabase = async (payload: {
 export const pullDataFromSupabase = async (): Promise<{
   success: boolean;
   message: string;
+  hasCloudContent?: boolean;
   data?: Partial<{
     cards: CreditCard[];
     transactions: Transaction[];
@@ -984,9 +1111,22 @@ export const pullDataFromSupabase = async (): Promise<{
       });
     }
 
+    const hasCloudContent = Boolean(
+      (cardsRes.data && cardsRes.data.length > 0) ||
+      (transRes.data && transRes.data.length > 0) ||
+      (cofsRes.data && cofsRes.data.length > 0) ||
+      (tripsRes.data && tripsRes.data.length > 0) ||
+      (instRes.data && instRes.data.length > 0) ||
+      (subsRes.data && subsRes.data.length > 0) ||
+      (settingsRes.data && settingsRes.data.length > 0) ||
+      (listsRes.data && listsRes.data.length > 0) ||
+      (stockRes.data && stockRes.data.length > 0)
+    );
+
     return {
       success: true,
       message: 'Dados baixados do Supabase com sucesso!',
+      hasCloudContent,
       data: resultData,
     };
   } catch (err: any) {
