@@ -74,8 +74,8 @@ export const AlertsView: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="bg-white/10 dark:bg-white/5 backdrop-blur-md rounded-xl p-4 border border-white/10 text-center min-w-[140px]">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="bg-white/10 dark:bg-white/5 backdrop-blur-md rounded-xl p-4 border border-white/10 text-center w-full sm:w-auto sm:min-w-[140px]">
               <div className="text-2xl font-black text-white">
                 {alerts.length}
               </div>

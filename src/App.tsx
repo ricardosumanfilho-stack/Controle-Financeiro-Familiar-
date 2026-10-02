@@ -23,6 +23,7 @@ import { EmergencyModal } from './components/goals/EmergencyModal';
 import { ExportImportModal } from './components/export/ExportImportModal';
 import { GoogleSheetsModal } from './components/sheets/GoogleSheetsModal';
 import { SupabaseModal } from './components/supabase/SupabaseModal';
+import { OfflineIndicator } from './components/pwa/OfflineIndicator';
 import { CreditCard, GroceryTrip, Transaction, InstallmentPurchase } from './types';
 import { motion, AnimatePresence } from 'motion/react';
 import { RotateCcw, Database } from 'lucide-react';
@@ -163,7 +164,7 @@ function MainAppContent() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-500 selection:text-white pb-20 lg:pb-8">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-500 selection:text-white pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] lg:pb-8">
       {/* Top Navbar */}
       <Navbar
         onOpenNewTransaction={handleOpenNewTransaction}
@@ -173,7 +174,7 @@ function MainAppContent() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 min-w-0 max-w-full overflow-x-hidden">
         {/* Banner de Recuperação Segura caso haja dados detectados de sessão anterior */}
         {recoverableSnapshot && !recoveryBannerDismissed && (
           <div
@@ -344,6 +345,9 @@ function MainAppContent() {
 
       {/* Mobile Bottom Navigation */}
       <BottomNav onOpenSupabase={() => setIsSupabaseModalOpen(true)} />
+
+      {/* Offline Status Toast */}
+      <OfflineIndicator />
 
       {/* Modals */}
       <TransactionModal

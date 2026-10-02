@@ -40,28 +40,39 @@ export const InstallmentModal: React.FC<InstallmentModalProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const isEditing = Boolean(installmentToEdit);
+  const prevIsOpenRef = React.useRef(false);
+  const prevEditingIdRef = React.useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (isOpen) {
-      if (installmentToEdit) {
-        setDescription(installmentToEdit.description || '');
-        setTotalAmount(installmentToEdit.totalAmount ? String(installmentToEdit.totalAmount) : '');
-        setTotalInstallments(installmentToEdit.totalInstallments || 6);
-        setFirstInstallmentMonth(installmentToEdit.firstInstallmentMonth || selectedMonth);
-        setCardId(installmentToEdit.cardId || cards[0]?.id || '');
-        setPerson(installmentToEdit.person || p1);
-        setCategory(installmentToEdit.category || 'Cartão de Crédito');
-      } else {
-        setDescription('');
-        setTotalAmount('');
-        setTotalInstallments(6);
-        setFirstInstallmentMonth(selectedMonth);
-        setCardId(cards[0]?.id || '');
-        setPerson(p1);
-        setCategory('Cartão de Crédito');
-      }
-      setShowDeleteConfirm(false);
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const isSwitchingInstallment =
+      isOpen && installmentToEdit?.id !== prevEditingIdRef.current;
+
+    prevIsOpenRef.current = isOpen;
+    prevEditingIdRef.current = installmentToEdit?.id;
+
+    if (!isOpen || (!isOpening && !isSwitchingInstallment)) {
+      return;
     }
+
+    if (installmentToEdit) {
+      setDescription(installmentToEdit.description || '');
+      setTotalAmount(installmentToEdit.totalAmount ? String(installmentToEdit.totalAmount) : '');
+      setTotalInstallments(installmentToEdit.totalInstallments || 6);
+      setFirstInstallmentMonth(installmentToEdit.firstInstallmentMonth || selectedMonth);
+      setCardId(installmentToEdit.cardId || cards[0]?.id || '');
+      setPerson(installmentToEdit.person || p1);
+      setCategory(installmentToEdit.category || 'Cartão de Crédito');
+    } else {
+      setDescription('');
+      setTotalAmount('');
+      setTotalInstallments(6);
+      setFirstInstallmentMonth(selectedMonth);
+      setCardId(cards[0]?.id || '');
+      setPerson(p1);
+      setCategory('Cartão de Crédito');
+    }
+    setShowDeleteConfirm(false);
   }, [isOpen, installmentToEdit, selectedMonth, cards, p1]);
 
   const calculatedInstallmentValue = React.useMemo(() => {

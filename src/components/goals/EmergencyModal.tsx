@@ -50,17 +50,24 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({
     emergencySettings.redirectTargetCofrinhoId || 'cof-casa'
   );
 
+  const prevIsOpenRef = React.useRef(false);
+
   useEffect(() => {
-    if (isOpen) {
-      const today = new Date().toISOString().slice(0, 10);
-      setDate(today.startsWith(selectedMonth) ? today : `${selectedMonth}-10`);
-      setTargetMonths(emergencySettings.targetMonths || 8);
-      setFamilySalaryIncome(emergencySettings.familySalaryIncome || 6900);
-      setRicardoObligation(emergencySettings.ricardoMonthlyObligation || 500);
-      setEllenObligation(emergencySettings.ellenMonthlyObligation || 500);
-      setRedirectWhenCompleted(emergencySettings.redirectWhenCompleted !== false);
-      setRedirectTargetCofrinhoId(emergencySettings.redirectTargetCofrinhoId || 'cof-casa');
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    prevIsOpenRef.current = isOpen;
+
+    if (!isOpen || !isOpening) {
+      return;
     }
+
+    const today = new Date().toISOString().slice(0, 10);
+    setDate(today.startsWith(selectedMonth) ? today : `${selectedMonth}-10`);
+    setTargetMonths(emergencySettings.targetMonths || 8);
+    setFamilySalaryIncome(emergencySettings.familySalaryIncome || 6900);
+    setRicardoObligation(emergencySettings.ricardoMonthlyObligation || 500);
+    setEllenObligation(emergencySettings.ellenMonthlyObligation || 500);
+    setRedirectWhenCompleted(emergencySettings.redirectWhenCompleted !== false);
+    setRedirectTargetCofrinhoId(emergencySettings.redirectTargetCofrinhoId || 'cof-casa');
   }, [isOpen, selectedMonth, emergencySettings]);
 
   const calculatedTarget = familySalaryIncome * targetMonths;

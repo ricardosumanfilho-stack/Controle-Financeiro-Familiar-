@@ -105,29 +105,36 @@ export const CofrinhoModal: React.FC<CofrinhoModalProps> = ({
   const [editCurrentBalance, setEditCurrentBalance] = useState('0');
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
+  const prevIsOpenRef = React.useRef(false);
+
   useEffect(() => {
-    if (isOpen) {
-      setActiveTab(initialMode);
-      setCofrinhoId(defaultCofrinhoId || 'cof-reserva');
-      setMovType(initialMovType || 'aporte');
-      setAmount('500');
-      setPerson('Família');
-      const today = new Date().toISOString().slice(0, 10);
-      setDate(today.startsWith(selectedMonth) ? today : `${selectedMonth}-10`);
-      setNotes('');
-      setTransferAmount('500');
-      setTransferNotes('');
-      setFeedbackMsg(null);
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    prevIsOpenRef.current = isOpen;
 
-      const targetOther = cofrinhos.find((c) => c.id !== defaultCofrinhoId);
-      if (targetOther) setTransferTargetId(targetOther.id);
+    if (!isOpen || !isOpening) {
+      return;
+    }
 
-      const targetCof = cofrinhos.find((c) => c.id === defaultCofrinhoId);
-      if (targetCof) {
-        populateEditForm(targetCof);
-        if (targetCof.person === 'Ellen' || targetCof.person === 'Ricardo') {
-          setPerson(targetCof.person as Person);
-        }
+    setActiveTab(initialMode);
+    setCofrinhoId(defaultCofrinhoId || 'cof-reserva');
+    setMovType(initialMovType || 'aporte');
+    setAmount('500');
+    setPerson('Família');
+    const today = new Date().toISOString().slice(0, 10);
+    setDate(today.startsWith(selectedMonth) ? today : `${selectedMonth}-10`);
+    setNotes('');
+    setTransferAmount('500');
+    setTransferNotes('');
+    setFeedbackMsg(null);
+
+    const targetOther = cofrinhos.find((c) => c.id !== defaultCofrinhoId);
+    if (targetOther) setTransferTargetId(targetOther.id);
+
+    const targetCof = cofrinhos.find((c) => c.id === defaultCofrinhoId);
+    if (targetCof) {
+      populateEditForm(targetCof);
+      if (targetCof.person === 'Ellen' || targetCof.person === 'Ricardo') {
+        setPerson(targetCof.person as Person);
       }
     }
   }, [isOpen, defaultCofrinhoId, initialMode, initialMovType, selectedMonth]);

@@ -40,7 +40,20 @@ export const CardSubscriptionModal: React.FC<CardSubscriptionModalProps> = ({
   const [notes, setNotes] = useState('');
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
 
+  const prevIsOpenRef = React.useRef(false);
+  const prevEditingIdRef = React.useRef<string | undefined>(undefined);
+
   useEffect(() => {
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const isSwitchingSub = isOpen && subscriptionToEdit?.id !== prevEditingIdRef.current;
+
+    prevIsOpenRef.current = isOpen;
+    prevEditingIdRef.current = subscriptionToEdit?.id;
+
+    if (!isOpen || (!isOpening && !isSwitchingSub)) {
+      return;
+    }
+
     if (subscriptionToEdit) {
       setName(subscriptionToEdit.name || subscriptionToEdit.description || '');
       setAmount(subscriptionToEdit.amount.toString());

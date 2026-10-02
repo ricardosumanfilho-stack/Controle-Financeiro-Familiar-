@@ -173,7 +173,7 @@ export const HouseFundView: React.FC = () => {
             </p>
           </div>
 
-          <div className="bg-white/10 dark:bg-white/5 backdrop-blur-md rounded-xl p-4 border border-white/10 min-w-[220px]">
+          <div className="bg-white/10 dark:bg-white/5 backdrop-blur-md rounded-xl p-4 border border-white/10 w-full sm:w-auto sm:min-w-[220px]">
             <div className="text-xs text-indigo-200 uppercase font-semibold tracking-wider">
               Status da Reserva de Emergência
             </div>

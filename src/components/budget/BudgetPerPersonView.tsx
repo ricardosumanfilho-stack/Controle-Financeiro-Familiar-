@@ -1319,11 +1319,11 @@ export const BudgetPerPersonView: React.FC = () => {
 
         {/* Tab 4: Tabela Comparativa de Alocação */}
         {selectedPersonTab === 'tabela' && (
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 overflow-x-auto shadow-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 w-full max-w-full min-w-0 overflow-x-auto shadow-xs">
             <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-3">
               Tabela de Alocação Orçamentária Detalhada ({formatMonthYearBR(selectedMonth)})
             </h4>
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full min-w-[560px] text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 font-semibold">
                   <th className="py-2.5 px-3">Item Orçamentário</th>

@@ -321,57 +321,57 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       </div>
 
       {/* Filter Summary Header */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 rounded-xl flex items-center justify-between">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+        <div className="p-3 sm:p-3.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 rounded-xl flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider block">
-              Receitas Filtradas
+            <span className="text-[10px] sm:text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider block">
+              Receitas
             </span>
-            <span className="text-lg font-black text-emerald-900 dark:text-emerald-200">
+            <span className="text-base sm:text-lg font-black text-emerald-900 dark:text-emerald-200">
               {formatCurrency(filterStats.income)}
             </span>
           </div>
-          <TrendingUp className="w-5 h-5 text-emerald-600" />
+          <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600 shrink-0" />
         </div>
 
-        <div className="p-3.5 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-xl flex items-center justify-between">
+        <div className="p-3 sm:p-3.5 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-xl flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-bold text-red-800 dark:text-red-300 uppercase tracking-wider block">
-              Despesas Filtradas
+            <span className="text-[10px] sm:text-[11px] font-bold text-red-800 dark:text-red-300 uppercase tracking-wider block">
+              Despesas
             </span>
-            <span className="text-lg font-black text-red-900 dark:text-red-200">
+            <span className="text-base sm:text-lg font-black text-red-900 dark:text-red-200">
               {formatCurrency(filterStats.expense)}
             </span>
           </div>
-          <TrendingDown className="w-5 h-5 text-red-600" />
+          <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 text-red-600 shrink-0" />
         </div>
 
-        <div className="p-3.5 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 rounded-xl flex items-center justify-between">
+        <div className="p-3 sm:p-3.5 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 rounded-xl flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider block">
-              Investimentos Filtrados
+            <span className="text-[10px] sm:text-[11px] font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider block">
+              Investimentos
             </span>
-            <span className="text-lg font-black text-blue-900 dark:text-blue-200">
+            <span className="text-base sm:text-lg font-black text-blue-900 dark:text-blue-200">
               {formatCurrency(filterStats.investment)}
             </span>
           </div>
-          <PiggyBank className="w-5 h-5 text-blue-600" />
+          <PiggyBank className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 shrink-0" />
         </div>
 
-        <div className="p-3.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between">
+        <div className="p-3 sm:p-3.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider block">
-              Resultado ({filterStats.count} registros)
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider block truncate">
+              Líquido ({filterStats.count})
             </span>
             <span
-              className={`text-lg font-black ${
+              className={`text-base sm:text-lg font-black ${
                 filterStats.balance >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-amber-600'
               }`}
             >
               {formatCurrency(filterStats.balance)}
             </span>
           </div>
-          <span className="text-[10px] text-slate-400 font-semibold">Líquido</span>
+          <span className="text-[9px] sm:text-[10px] text-slate-400 font-semibold shrink-0">Total</span>
         </div>
       </div>
 

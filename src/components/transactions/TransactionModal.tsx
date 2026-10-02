@@ -167,7 +167,24 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     return competenceMonth || date.slice(0, 7) || selectedMonth;
   }, [paymentMethod, selectedCard, date, competenceMonth, selectedMonth]);
 
+  // References to prevent spurious resets while user is typing in open modal
+  const prevIsOpenRef = React.useRef(false);
+  const prevEditingIdRef = React.useRef<string | undefined>(undefined);
+
   useEffect(() => {
+    // Only initialize/reset when the modal transitions from closed to open,
+    // or when switching to edit a different transaction.
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const isSwitchingTransaction =
+      isOpen && editingTransaction?.id !== prevEditingIdRef.current;
+
+    prevIsOpenRef.current = isOpen;
+    prevEditingIdRef.current = editingTransaction?.id;
+
+    if (!isOpen || (!isOpening && !isSwitchingTransaction)) {
+      return;
+    }
+
     setValidationError(null);
     if (editingTransaction) {
       setType(editingTransaction.type);

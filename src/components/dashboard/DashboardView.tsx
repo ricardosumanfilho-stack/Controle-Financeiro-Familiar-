@@ -23,6 +23,7 @@ import {
   Palmtree,
   Wallet,
   Compass,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { Person } from '../../types';
 import { CofrinhoModal } from '../goals/CofrinhoModal';
@@ -44,7 +45,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const {
     currentMonthSummary,
-    cumulativeBalance,
     getCardInvoicesForMonth,
     selectedMonth,
     transactions,
@@ -183,7 +183,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Main Monthly Metrics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Receitas */}
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs relative overflow-hidden">
           <div className="flex items-center justify-between">
@@ -272,26 +272,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Receitas menos despesas do mês
-            </p>
-          </div>
-        </div>
-
-        {/* Saldo Acumulado */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs relative overflow-hidden">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Saldo Acumulado Geral
-            </span>
-            <div className="p-2 bg-indigo-100 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 rounded-xl">
-              <ShieldCheck className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-3">
-            <h3 className="text-2xl font-black text-indigo-600 dark:text-indigo-400">
-              {formatCurrency(cumulativeBalance)}
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Patrimônio líquido em caixa
             </p>
           </div>
         </div>
@@ -1015,65 +995,90 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {recentTransactions.map((tx) => {
               const personColors = getPersonBadgeColor(tx.person);
               const isIncome = tx.type === 'receita';
+              const isInvestment = tx.type === 'investimento';
+              const isTransfer = tx.type === 'transferencia';
+
               return (
                 <div
                   key={tx.id}
-                  className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-100 dark:border-slate-700/60 hover:bg-slate-100/80 dark:hover:bg-slate-800 transition-colors"
+                  className="p-3 sm:p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-100 dark:border-slate-700/60 hover:bg-slate-100/80 dark:hover:bg-slate-800 transition-colors flex items-center justify-between gap-2.5 sm:gap-4"
                 >
-                  <div className="flex items-center gap-3">
+                  {/* Left Column: Icon + Text Content */}
+                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                     <div
-                      className={`p-2 rounded-xl text-xs font-bold ${
+                      className={`p-2 rounded-xl text-xs font-bold shrink-0 ${
                         isIncome
                           ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          : isInvestment
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
+                          : isTransfer
+                          ? 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300'
                           : 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300'
                       }`}
                     >
-                      {isIncome ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                      {isIncome ? (
+                        <TrendingUp className="w-4 h-4" />
+                      ) : isInvestment ? (
+                        <PiggyBank className="w-4 h-4" />
+                      ) : isTransfer ? (
+                        <ArrowLeftRight className="w-4 h-4" />
+                      ) : (
+                        <TrendingDown className="w-4 h-4" />
+                      )}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+
+                    <div className="min-w-0 flex-1 space-y-1">
+                      {/* Title & Type Badges */}
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                        <span className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200 truncate max-w-full">
                           {tx.description}
                         </span>
-                        {tx.type === 'investimento' && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 font-semibold">
+                        {isInvestment && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200 font-semibold shrink-0">
                             Investimento
                           </span>
                         )}
-                        {tx.type === 'transferencia' && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 font-semibold">
+                        {isTransfer && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200 font-semibold shrink-0">
                             Transferência
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        <span>{formatDateBR(tx.date)}</span>
-                        <span>•</span>
-                        <span>{tx.category}</span>
-                        <span>•</span>
-                        <span className={`px-1.5 py-0.2 rounded-md font-semibold ${personColors.badge}`}>
+
+                      {/* Details: Date • Category • Person */}
+                      <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 flex-wrap min-w-0">
+                        <span className="shrink-0">{formatDateBR(tx.date)}</span>
+                        <span className="shrink-0 text-slate-300 dark:text-slate-600">•</span>
+                        <span className="truncate max-w-[120px] sm:max-w-none">{tx.category}</span>
+                        <span className="shrink-0 text-slate-300 dark:text-slate-600">•</span>
+                        <span className={`px-1.5 py-0.2 rounded-md font-semibold text-[10px] shrink-0 ${personColors.badge}`}>
                           {tx.person}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="text-right">
+                  {/* Right Column: Amount & Status (Fixed, No overlap, No sign wrap) */}
+                  <div className="text-right shrink-0 min-w-max pl-2 flex flex-col items-end justify-center">
                     <span
-                      className={`text-sm font-black ${
+                      className={`text-xs sm:text-sm font-black whitespace-nowrap leading-tight ${
                         isIncome
                           ? 'text-emerald-600 dark:text-emerald-400'
+                          : isInvestment
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : isTransfer
+                          ? 'text-purple-600 dark:text-purple-400'
                           : 'text-slate-900 dark:text-slate-100'
                       }`}
                     >
-                      {isIncome ? '+' : '-'} {formatCurrency(tx.amount)}
+                      {isIncome ? '+ ' : '- '}{formatCurrency(tx.amount)}
                     </span>
                     <span
-                      className={`block text-[10px] font-medium ${
+                      className={`inline-block text-[10px] font-semibold whitespace-nowrap mt-0.5 ${
                         tx.paid
                           ? 'text-emerald-600 dark:text-emerald-400'
                           : 'text-amber-600 dark:text-amber-400'

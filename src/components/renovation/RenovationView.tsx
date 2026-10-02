@@ -311,8 +311,8 @@ export const RenovationView: React.FC = () => {
             </button>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs sm:text-sm">
+          <div className="w-full max-w-full min-w-0 overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-xs sm:text-sm">
               <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800">
                 <tr>
                   <th className="py-3.5 px-4">Data</th>
@@ -432,8 +432,8 @@ export const RenovationView: React.FC = () => {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs sm:text-sm">
+          <div className="w-full max-w-full min-w-0 overflow-x-auto">
+            <table className="w-full min-w-[550px] text-left text-xs sm:text-sm">
               <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800">
                 <tr>
                   <th className="py-3 px-4">Mês Competência</th>

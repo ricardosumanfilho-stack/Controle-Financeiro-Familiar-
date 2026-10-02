@@ -21,7 +21,16 @@ export const InvestmentModal: React.FC<InvestmentModalProps> = ({
   const [date, setDate] = useState('');
   const [notes, setNotes] = useState('');
 
+  const prevIsOpenRef = React.useRef(false);
+
   React.useEffect(() => {
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    prevIsOpenRef.current = isOpen;
+
+    if (!isOpen || !isOpening) {
+      return;
+    }
+
     setPerson(defaultPerson);
     setAmount('500'); // Padrão meta R$ 500
     const today = new Date().toISOString().slice(0, 10);

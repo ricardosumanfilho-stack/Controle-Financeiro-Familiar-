@@ -42,7 +42,20 @@ export const GroceryModal: React.FC<GroceryModalProps> = ({ isOpen, onClose, edi
     return 5;
   };
 
+  const prevIsOpenRef = React.useRef(false);
+  const prevEditingIdRef = React.useRef<string | undefined>(undefined);
+
   useEffect(() => {
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const isSwitchingTrip = isOpen && editingTrip?.id !== prevEditingIdRef.current;
+
+    prevIsOpenRef.current = isOpen;
+    prevEditingIdRef.current = editingTrip?.id;
+
+    if (!isOpen || (!isOpening && !isSwitchingTrip)) {
+      return;
+    }
+
     if (editingTrip) {
       setStoreName(editingTrip.storeName);
       setTotalAmount(String(editingTrip.totalAmount));

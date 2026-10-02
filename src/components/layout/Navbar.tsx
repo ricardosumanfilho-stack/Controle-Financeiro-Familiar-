@@ -1,6 +1,7 @@
 import React from 'react';
 import { useFinance } from '../../context/FinanceContext';
 import { addMonthsToKey, formatMonthYearBR } from '../../utils/formatters';
+import { PWAInstallButton } from '../pwa/PWAInstallButton';
 import {
   ChevronLeft,
   ChevronRight,
@@ -73,52 +74,53 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
         {/* Top bar with Brand, Month Picker, and Quick Actions */}
-        <div className="flex items-center justify-between h-16 gap-3">
+        <div className="flex items-center justify-between h-14 sm:h-16 gap-1.5 sm:gap-3">
           {/* Logo & Brand */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-              <Wallet className="w-5 h-5" />
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 shrink-0">
+              <Wallet className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="font-bold text-slate-900 dark:text-slate-100 text-base sm:text-lg leading-tight tracking-tight">
-                  Gestão Financeira
+                <h1 className="font-bold text-slate-900 dark:text-slate-100 text-xs sm:text-lg leading-tight tracking-tight">
+                  <span className="sm:hidden">Finanças</span>
+                  <span className="hidden sm:inline">Gestão Financeira</span>
                 </h1>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 hidden sm:block">
+              <p className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 hidden md:block">
                 Ricardo, Ellen & Família
               </p>
             </div>
           </div>
 
           {/* Month Navigator */}
-          <div className="flex items-center bg-slate-100 dark:bg-slate-800/90 rounded-xl p-1 border border-slate-200 dark:border-slate-700/80">
+          <div className="flex items-center bg-slate-100 dark:bg-slate-800/90 rounded-xl p-0.5 sm:p-1 border border-slate-200 dark:border-slate-700/80 shrink-0">
             <button
               id="prev-month-btn"
               onClick={handlePrevMonth}
-              className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-white dark:hover:bg-slate-700 transition-colors"
+              className="p-1 sm:p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-white dark:hover:bg-slate-700 transition-colors cursor-pointer"
               aria-label="Mês anterior"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
-            <span className="px-2.5 text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200 min-w-[120px] sm:min-w-[140px] text-center capitalize">
+            <span className="px-1 sm:px-2.5 text-[11px] sm:text-sm font-bold text-slate-800 dark:text-slate-200 min-w-[70px] sm:min-w-[140px] text-center capitalize select-none truncate">
               {formatMonthYearBR(selectedMonth)}
             </span>
             <button
               id="next-month-btn"
               onClick={handleNextMonth}
-              className="p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-white dark:hover:bg-slate-700 transition-colors"
+              className="p-1 sm:p-1.5 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-white dark:hover:bg-slate-700 transition-colors cursor-pointer"
               aria-label="Próximo mês"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
           </div>
 
           {/* Right Action buttons */}
-          <div className="flex items-center gap-2">
-            {/* Auto-save Status Indicator */}
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            {/* Auto-save Status Indicator (desktop/tablet) */}
             <button
               id="auto-save-status-btn"
               type="button"
@@ -159,26 +161,30 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
+            {/* PWA Install Button */}
+            <PWAInstallButton variant="navbar" />
+
             {/* Dark/Light Mode Toggle Button */}
             <button
               id="theme-toggle-btn"
               type="button"
               onClick={toggleTheme}
-              className="p-2 text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-700 transition-all flex items-center justify-center shadow-xs cursor-pointer"
+              className="p-1.5 sm:p-2 text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-700 transition-all flex items-center justify-center shadow-xs cursor-pointer"
               title={isDarkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
               aria-label={isDarkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
             >
               {isDarkMode ? (
-                <Sun className="w-4 h-4 text-amber-400" />
+                <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
               ) : (
-                <Moon className="w-4 h-4 text-slate-700" />
+                <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-700" />
               )}
             </button>
 
+            {/* Supabase Button (hidden on mobile, present in drawer) */}
             <button
               id="nav-supabase-btn"
               onClick={onOpenSupabase}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border transition-colors shadow-xs cursor-pointer ${
+              className={`hidden sm:flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border transition-colors shadow-xs cursor-pointer ${
                 isSupabaseConnected
                   ? 'text-emerald-800 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30'
                   : 'text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700'
@@ -190,43 +196,46 @@ export const Navbar: React.FC<NavbarProps> = ({
               }
             >
               <Database className={`w-3.5 h-3.5 ${supabaseSyncStatus === 'syncing' ? 'animate-bounce text-emerald-500' : 'text-emerald-600 dark:text-emerald-400'}`} />
-              <span className="hidden sm:inline">Supabase</span>
+              <span className="hidden md:inline">Supabase</span>
               {isSupabaseConnected && supabaseAutoSyncEnabled && (
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold hidden md:inline">
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold hidden lg:inline">
                   {supabaseSyncStatus === 'syncing' ? 'sync...' : `${supabaseNextSyncSeconds}s`}
                 </span>
               )}
             </button>
 
+            {/* Sheets Button (hidden on small mobile, present in drawer) */}
             <button
               id="nav-sheets-btn"
               onClick={onOpenGoogleSheets}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-700 transition-colors shadow-xs cursor-pointer"
+              className="hidden md:flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-700 transition-colors shadow-xs cursor-pointer"
               title="Sincronizar com Google Sheets"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-              <span className="hidden sm:inline">Google Sheets</span>
-              <span className="sm:hidden">Sheets</span>
+              <span>Google Sheets</span>
             </button>
 
+            {/* Export Button (desktop only) */}
             <button
               id="nav-export-btn"
               onClick={onOpenExportImport}
-              className="hidden md:flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-700 transition-colors"
+              className="hidden lg:flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
               title="Exportar dados ou gerenciar demo"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Exportar</span>
             </button>
 
+            {/* New Transaction Button */}
             <button
               id="nav-new-tx-btn"
               onClick={onOpenNewTransaction}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs shadow-blue-500/20 transition-all transform active:scale-95"
+              className="flex items-center gap-1.5 p-1.5 sm:px-3.5 sm:py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs shadow-blue-500/20 transition-all transform active:scale-95 cursor-pointer shrink-0"
+              title="Cadastrar Novo Lançamento"
+              aria-label="Cadastrar Novo Lançamento"
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">Novo Lançamento</span>
-              <span className="sm:hidden">Novo</span>
             </button>
           </div>
         </div>

@@ -198,13 +198,13 @@ export const CardsView: React.FC<CardsViewProps> = ({
       </div>
 
       {/* Person Filter Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+      <div className="flex items-center gap-1.5 sm:gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 overflow-x-auto no-scrollbar max-w-full min-w-0">
         {['Todos', p1, p2].map((tab) => (
           <button
             key={tab}
             id={`filter-person-${tab}`}
             onClick={() => setPersonTab(tab)}
-            className={`px-4 py-2 text-xs font-bold rounded-xl transition-colors ${
+            className={`px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-bold rounded-xl transition-colors whitespace-nowrap shrink-0 ${
               personTab === tab
                 ? 'bg-purple-600 text-white shadow-xs'
                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'

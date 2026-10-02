@@ -57,20 +57,20 @@ export const Modal: React.FC<ModalProps> = ({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 30, scale: 0.98 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className={`relative w-full ${maxWClass} bg-slate-900 rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-800 overflow-hidden z-10 max-h-[90vh] flex flex-col text-slate-100`}
+            className={`relative w-full ${maxWClass} bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden z-10 max-h-[92vh] sm:max-h-[88vh] flex flex-col text-slate-900 dark:text-slate-100`}
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/40">
+            <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-slate-950/40 shrink-0">
               <div>
-                <h3 className="text-lg font-bold text-slate-100 tracking-tight">{title}</h3>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">{title}</h3>
                 {subtitle && (
-                  <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>
+                  <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5">{subtitle}</p>
                 )}
               </div>
               <button
                 id="modal-close-btn"
                 onClick={onClose}
-                className="p-2 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-full transition-colors"
+                className="p-1.5 sm:p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
                 aria-label="Fechar"
               >
                 <X className="w-5 h-5" />
@@ -78,7 +78,7 @@ export const Modal: React.FC<ModalProps> = ({
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 overflow-y-auto">{children}</div>
+            <div className="p-4 sm:p-6 overflow-y-auto">{children}</div>
           </motion.div>
         </div>
       )}

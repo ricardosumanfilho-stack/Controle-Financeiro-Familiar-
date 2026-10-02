@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useFinance } from '../../context/FinanceContext';
+import { PWAInstallButton } from '../pwa/PWAInstallButton';
 import {
   LayoutDashboard,
   Receipt,
@@ -57,7 +58,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ onOpenSupabase }) => {
       {/* Drawer / Popover de Mais Opções no Mobile */}
       {isMoreOpen && (
         <div className="lg:hidden fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-xs flex flex-col justify-end">
-          <div className="bg-white dark:bg-slate-900 rounded-t-3xl p-5 border-t border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 pb-8">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl p-5 border-t border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 pb-8 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <span className="font-bold text-sm text-slate-900 dark:text-slate-100">
                 Menu de Funcionalidades
@@ -68,6 +69,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({ onOpenSupabase }) => {
               >
                 <X className="w-5 h-5" />
               </button>
+            </div>
+
+            {/* PWA Install Button Banner in Drawer */}
+            <div>
+              <PWAInstallButton variant="drawer" />
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
@@ -157,8 +163,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({ onOpenSupabase }) => {
       )}
 
       {/* Barra Inferior */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 pb-safe">
-        <nav className="flex items-center justify-around h-16 px-1">
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-lg">
+        <nav className="flex items-center justify-around h-15 px-1">
           {mainItems.map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.id;

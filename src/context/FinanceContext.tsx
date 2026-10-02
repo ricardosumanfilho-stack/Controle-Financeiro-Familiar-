@@ -1526,11 +1526,36 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
           // Se a nuvem tem conteúdo ativo, aplica o estado da nuvem fielmente
           if (hasCloudContent) {
-            if (d.cards !== undefined) {
-              setCards(d.cards);
-              cardsRef.current = d.cards;
-              safeStorageSet(STORAGE_KEYS.CARDS, d.cards);
-            }
+            const incomingCloudHash = computeDataHash({
+              transactions: d.transactions || transactionsRef.current,
+              cards: d.cards || cardsRef.current,
+              cardSubscriptions: d.cardSubscriptions || cardSubscriptionsRef.current,
+              cofrinhos: d.cofrinhos || cofrinhosRef.current,
+              cofrinhoMovements: d.cofrinhoMovements || cofrinhoMovementsRef.current,
+              installmentPurchases: d.installmentPurchases || installmentPurchasesRef.current,
+              groceryTrips: d.groceryTrips || groceryTripsRef.current,
+              groceryPlansByMonth: groceryPlansByMonthRef.current,
+              shoppingLists: d.shoppingLists || shoppingListsRef.current,
+              stockItems: d.stockItems || stockItemsRef.current,
+              cestaBasicaRecords: d.cestaBasicaRecords || cestaBasicaRecordsRef.current,
+              salarySettings: d.salarySettings || salarySettingsRef.current,
+              emergencySettings: d.emergencySettings || emergencySettingsRef.current,
+              houseFundSettings: d.houseFundSettings || houseFundSettingsRef.current,
+              futureRentSettings: d.futureRentSettings || futureRentSettingsRef.current,
+              globalCofrinhoSettings: d.globalCofrinhoSettings || globalCofrinhoSettingsRef.current,
+              closingChecklists: d.closingChecklists || closingChecklistsRef.current,
+              investmentContributions: d.investmentContributions || investmentContributionsRef.current,
+              emergencyContributions: d.emergencyContributions || emergencyContributionsRef.current,
+              renovationExpenses: d.renovationExpenses || renovationExpensesRef.current,
+            });
+
+            // Só atualiza os estados se os dados da nuvem tiverem de fato mudado
+            if (incomingCloudHash !== lastSyncedHashRef.current) {
+              if (d.cards !== undefined) {
+                setCards(d.cards);
+                cardsRef.current = d.cards;
+                safeStorageSet(STORAGE_KEYS.CARDS, d.cards);
+              }
             if (d.transactions !== undefined) {
               setTransactions(d.transactions);
               transactionsRef.current = d.transactions;
@@ -1636,40 +1661,18 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
               safeStorageSet(STORAGE_KEYS.GLOBAL_COFRINHO_SETTINGS, d.globalCofrinhoSettings);
             }
 
-            // Atualiza hash local sincronizado para refletir o estado exato da nuvem
-            lastSyncedHashRef.current = computeDataHash({
-              transactions: d.transactions || transactionsRef.current,
-              cards: d.cards || cardsRef.current,
-              cardSubscriptions: d.cardSubscriptions || cardSubscriptionsRef.current,
-              cofrinhos: d.cofrinhos || cofrinhosRef.current,
-              cofrinhoMovements: d.cofrinhoMovements || cofrinhoMovementsRef.current,
-              installmentPurchases: d.installmentPurchases || installmentPurchasesRef.current,
-              groceryTrips: d.groceryTrips || groceryTripsRef.current,
-              groceryPlansByMonth: groceryPlansByMonthRef.current,
-              shoppingLists: d.shoppingLists || shoppingListsRef.current,
-              stockItems: d.stockItems || stockItemsRef.current,
-              cestaBasicaRecords: d.cestaBasicaRecords || cestaBasicaRecordsRef.current,
-              salarySettings: d.salarySettings || salarySettingsRef.current,
-              emergencySettings: d.emergencySettings || emergencySettingsRef.current,
-              houseFundSettings: d.houseFundSettings || houseFundSettingsRef.current,
-              futureRentSettings: d.futureRentSettings || futureRentSettingsRef.current,
-              globalCofrinhoSettings: d.globalCofrinhoSettings || globalCofrinhoSettingsRef.current,
-              closingChecklists: d.closingChecklists || closingChecklistsRef.current,
-              investmentContributions: d.investmentContributions || investmentContributionsRef.current,
-              emergencyContributions: d.emergencyContributions || emergencyContributionsRef.current,
-              renovationExpenses: d.renovationExpenses || renovationExpensesRef.current,
-            });
+              saveVaultSnapshot(
+                {
+                  cards: d.cards || cardsRef.current,
+                  transactions: d.transactions || transactionsRef.current,
+                  cofrinhos: d.cofrinhos || cofrinhosRef.current,
+                },
+                'Sincronizado da Nuvem Supabase'
+              );
+            }
 
+            lastSyncedHashRef.current = incomingCloudHash;
             hasPendingLocalChangesRef.current = false;
-
-            saveVaultSnapshot(
-              {
-                cards: d.cards || cardsRef.current,
-                transactions: d.transactions || transactionsRef.current,
-                cofrinhos: d.cofrinhos || cofrinhosRef.current,
-              },
-              'Sincronizado da Nuvem Supabase'
-            );
           }
         } else if (!pullRes.success && direction === 'pull') {
           throw new Error(pullRes.message);

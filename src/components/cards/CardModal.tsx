@@ -23,7 +23,20 @@ export const CardModal: React.FC<CardModalProps> = ({ isOpen, onClose, editingCa
   const [color, setColor] = useState('#820AD1');
   const [brand, setBrand] = useState('Mastercard');
 
+  const prevIsOpenRef = React.useRef(false);
+  const prevEditingIdRef = React.useRef<string | undefined>(undefined);
+
   useEffect(() => {
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    const isSwitchingCard = isOpen && editingCard?.id !== prevEditingIdRef.current;
+
+    prevIsOpenRef.current = isOpen;
+    prevEditingIdRef.current = editingCard?.id;
+
+    if (!isOpen || (!isOpening && !isSwitchingCard)) {
+      return;
+    }
+
     if (editingCard) {
       setName(editingCard.name);
       setPerson(editingCard.person === 'Família' ? p1 : editingCard.person);

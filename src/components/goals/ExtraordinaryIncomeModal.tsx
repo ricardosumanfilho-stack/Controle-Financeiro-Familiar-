@@ -58,16 +58,23 @@ export const ExtraordinaryIncomeModal: React.FC<ExtraordinaryIncomeModalProps> =
     redirected: boolean;
   } | null>(null);
 
+  const prevIsOpenRef = React.useRef(false);
+
   useEffect(() => {
-    if (isOpen) {
-      setDescription('');
-      setAmount('1500');
-      setPerson(p1);
-      const today = new Date().toISOString().slice(0, 10);
-      setDate(today.startsWith(selectedMonth) ? today : `${selectedMonth}-10`);
-      setNotes('');
-      setSuccessInfo(null);
+    const isOpening = isOpen && !prevIsOpenRef.current;
+    prevIsOpenRef.current = isOpen;
+
+    if (!isOpen || !isOpening) {
+      return;
     }
+
+    setDescription('');
+    setAmount('1500');
+    setPerson(p1);
+    const today = new Date().toISOString().slice(0, 10);
+    setDate(today.startsWith(selectedMonth) ? today : `${selectedMonth}-10`);
+    setNotes('');
+    setSuccessInfo(null);
   }, [isOpen, selectedMonth, p1]);
 
   const numAmount = parseFloat(amount.replace(',', '.')) || 0;

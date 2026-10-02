@@ -856,7 +856,7 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
       </div>
 
       {/* Navigation Sub-Tabs */}
-      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800 pb-1 overflow-x-auto">
+      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800 pb-1 overflow-x-auto w-full max-w-full min-w-0 no-scrollbar">
         {[
           { id: 'resumo', label: 'Resumo do Mês', icon: PieIcon },
           { id: 'compras', label: 'Registro de Compras', icon: ShoppingBag },
@@ -1501,8 +1501,8 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
 
           {/* Product Items Table / Grid */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+            <div className="overflow-x-auto w-full max-w-full min-w-0">
+              <table className="w-full min-w-[550px] text-left text-xs">
                 <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 font-semibold border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <th className="px-4 py-3">Produto</th>

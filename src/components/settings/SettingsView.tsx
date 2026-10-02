@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useFinance } from '../../context/FinanceContext';
 import { formatCurrencyBR } from '../../utils/formatters';
 import { ConfirmModal } from '../common/ConfirmModal';
+import { PWAInstallButton } from '../pwa/PWAInstallButton';
 import {
   Settings,
   DollarSign,
@@ -177,6 +178,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets, 
       </div>
 
       <form onSubmit={handleSaveAll} className="space-y-6">
+        {/* Bloco: Aplicativo Móvel & PWA */}
+        <PWAInstallButton variant="card" />
+
         {/* Bloco: Tema e Aparência */}
         <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
