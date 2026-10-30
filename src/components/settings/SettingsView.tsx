@@ -27,7 +27,9 @@ import {
   ShieldCheck,
   History,
   RotateCcw,
+  AlertTriangle,
 } from 'lucide-react';
+import { scanForRecoverableData, VaultSnapshot } from '../../utils/vaultPersistence';
 
 interface SettingsViewProps {
   onOpenGoogleSheets?: () => void;
@@ -76,6 +78,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets, 
   const [restoringPointId, setRestoringPointId] = useState<string | null>(null);
   const [pointCreatedSuccess, setPointCreatedSuccess] = useState(false);
   const [pointRestoredSuccess, setPointRestoredSuccess] = useState(false);
+  const [isScanningVault, setIsScanningVault] = useState(false);
+  const [scanResultFound, setScanResultFound] = useState<VaultSnapshot | null>(null);
+  const [scanStatusMessage, setScanStatusMessage] = useState<string | null>(null);
+
+  const handleScanVault = async () => {
+    setIsScanningVault(true);
+    setScanStatusMessage(null);
+    setScanResultFound(null);
+    try {
+      const snap = await scanForRecoverableData();
+      if (snap && snap.data) {
+        const txsCount = snap.transactionsCount || (Array.isArray(snap.data.transactions) ? snap.data.transactions.length : 0);
+        setScanResultFound(snap);
+        setScanStatusMessage(`Encontrado backup com ${txsCount} lançamentos salvos em ${snap.dateStr}!`);
+      } else {
+        setScanStatusMessage('Nenhum backup local foi encontrado neste navegador para esta URL. Se você preencheu os dados em outra aba/URL ou no Supabase, veja as orientações abaixo.');
+      }
+    } catch {
+      setScanStatusMessage('Erro ao escanear cofre local.');
+    } finally {
+      setIsScanningVault(false);
+    }
+  };
 
   // Persons local state
   const [person1, setPerson1] = useState(salarySettings.person1Name || 'Ricardo');
@@ -578,6 +603,62 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenGoogleSheets, 
               <span>{pointCreatedSuccess ? 'Ponto Criado!' : 'Criar Ponto de Restauração'}</span>
             </button>
           </div>
+        </div>
+
+        {/* Card de Busca e Recuperação de Emergência */}
+        <div className="p-4 rounded-xl border border-amber-300 dark:border-amber-800/80 bg-amber-50/70 dark:bg-amber-950/30 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-2">
+                <RotateCcw className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                Recuperação de Emergência de Dados Perdidos
+              </div>
+              <p className="text-[11px] text-amber-900/80 dark:text-amber-300/80 mt-1">
+                Se você sincronizou com o GitHub ou abriu o app e seus dados sumiram, clique abaixo para escanear snapshots guardados no navegador.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              disabled={isScanningVault}
+              onClick={handleScanVault}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+            >
+              {isScanningVault ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Escaneando...</span>
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Buscar Backup no Navegador</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {scanStatusMessage && (
+            <div className={`p-3 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${scanResultFound ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
+              <div className="flex items-center gap-2">
+                {scanResultFound ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />}
+                <span>{scanStatusMessage}</span>
+              </div>
+              {scanResultFound && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    restoreFromSnapshot(scanResultFound);
+                    setScanStatusMessage('Dados restaurados com sucesso para a tela!');
+                    setScanResultFound(null);
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold rounded-xl transition-all shadow-xs shrink-0 cursor-pointer"
+                >
+                  Restaurar Agora
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Lista de Pontos de Restauração Salvos */}

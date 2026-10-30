@@ -162,11 +162,38 @@ export async function getRestorePoints(): Promise<VaultSnapshot[]> {
 }
 
 // Procura por dados anteriores que possam ser recuperados
+// Procura por dados anteriores que possam ser recuperados
 export async function scanForRecoverableData(): Promise<VaultSnapshot | null> {
   try {
-    // 1. Verifica snapshot mais recente no IndexedDB
     const db = await openDB();
     if (db) {
+      // 1. Verifica histórico completo no IndexedDB (busca snapshot mais rico em dados)
+      try {
+        const txHist = db.transaction(STORE_HISTORY, 'readonly');
+        const storeHist = txHist.objectStore(STORE_HISTORY);
+        const reqHist = storeHist.getAll();
+        const allHist = await new Promise<VaultSnapshot[]>((res) => {
+          reqHist.onsuccess = () => res((reqHist.result as VaultSnapshot[]) || []);
+          reqHist.onerror = () => res([]);
+        });
+
+        const sortedHist = allHist
+          .filter((s) => s.data && Array.isArray(s.data.transactions) && s.data.transactions.length > 0)
+          .sort((a, b) => {
+            const countA = a.transactionsCount || a.data.transactions.length;
+            const countB = b.transactionsCount || b.data.transactions.length;
+            if (countB !== countA) return countB - countA;
+            return b.timestamp - a.timestamp;
+          });
+
+        if (sortedHist.length > 0) {
+          return sortedHist[0];
+        }
+      } catch (errHist) {
+        console.warn('[VaultPersistence] Erro ao ler histórico IndexedDB:', errHist);
+      }
+
+      // 2. Verifica snapshot mais recente no IndexedDB
       try {
         const tx = db.transaction(STORE_CURRENT, 'readonly');
         const store = tx.objectStore(STORE_CURRENT);
@@ -182,7 +209,7 @@ export async function scanForRecoverableData(): Promise<VaultSnapshot | null> {
       } catch {}
     }
 
-    // 2. Verifica LocalStorage Mirror
+    // 3. Verifica LocalStorage Mirror
     const rawVault = localStorage.getItem(LOCAL_VAULT_KEY);
     if (rawVault) {
       try {
@@ -193,34 +220,44 @@ export async function scanForRecoverableData(): Promise<VaultSnapshot | null> {
       } catch {}
     }
 
-    // 3. Verifica se existem chaves legadas de versões anteriores no LocalStorage
-    const legacyTxRaw = localStorage.getItem('fin_family_transactions') || localStorage.getItem('fin_family_transactions_v1');
-    if (legacyTxRaw) {
-      try {
-        const txs = JSON.parse(legacyTxRaw);
-        if (Array.isArray(txs) && txs.length > 0) {
-          return {
-            id: 'legacy-recovery',
-            timestamp: Date.now(),
-            dateStr: 'Versão Anterior Local',
-            transactionsCount: txs.length,
-            cardsCount: 0,
-            label: 'Dados Legados Encontrados no Navegador',
-            data: {
-              transactions: txs,
-            },
-          };
-        }
-      } catch {}
-    }
-
-    // 4. Verifica qualquer backup automático ou emergencial
+    // 4. Verifica backup alternativo de emergência
     const emergencyRaw = localStorage.getItem(LOCAL_VAULT_BACKUP_ALT);
     if (emergencyRaw) {
       try {
         const snap = JSON.parse(emergencyRaw) as VaultSnapshot;
-        if (snap && snap.data) return snap;
+        if (snap && snap.data && Array.isArray(snap.data.transactions) && snap.data.transactions.length > 0) {
+          return snap;
+        }
       } catch {}
+    }
+
+    // 5. Verifica se existem chaves legadas de versões anteriores no LocalStorage
+    const legacyKeys = [
+      'fin_family_transactions',
+      'fin_family_transactions_v1',
+      'fin_family_transactions_v2_backup',
+      'fin_family_transactions_v2',
+    ];
+    for (const key of legacyKeys) {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return {
+              id: `legacy-${key}`,
+              timestamp: Date.now(),
+              dateStr: 'Versão Anterior Local',
+              transactionsCount: parsed.length,
+              cardsCount: 0,
+              label: `Dados Encontrados em ${key}`,
+              data: {
+                transactions: parsed,
+              },
+            };
+          }
+        } catch {}
+      }
     }
   } catch (err) {
     console.warn('[VaultPersistence] Erro ao escanear por recuperação:', err);

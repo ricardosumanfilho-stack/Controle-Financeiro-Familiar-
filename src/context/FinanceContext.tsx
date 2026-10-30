@@ -1214,8 +1214,9 @@ const deduplicateTransactions = (list: Transaction[]): Transaction[] => {
             recoverable.transactionsCount ||
             (Array.isArray(recoverable.data.transactions) ? recoverable.data.transactions.length : 0);
           const currentTxCount = transactionsRef.current.length;
-          // Se o backup tem dados e difere do estado atual, disponibiliza aviso de recuperação
-          if (snapTxCount > 0 && snapTxCount !== currentTxCount) {
+          const currentHasDemo = transactionsRef.current.some((t) => t.isDemo);
+          // Se o backup tem dados e o estado atual tem dados demo ou difere, disponibiliza aviso de recuperação
+          if (snapTxCount > 0 && (currentHasDemo || snapTxCount !== currentTxCount)) {
             setRecoverableSnapshot(recoverable);
           }
         }

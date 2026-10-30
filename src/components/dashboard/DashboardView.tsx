@@ -150,6 +150,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Cofrinhos total accumulated
   const totalCofrinhos = cofrinhos.reduce((s, c) => s + c.currentBalance, 0);
 
+  // Calculation variables for the 3 top metrics cards
+  const personIncome =
+    personFilter === 'Todos'
+      ? currentMonthSummary.totalIncome
+      : currentMonthSummary.incomeByPerson[personFilter] || 0;
+
+  const personExpense =
+    personFilter === 'Todos'
+      ? currentMonthSummary.totalExpense
+      : currentMonthSummary.expenseByPerson[personFilter] || 0;
+
+  const transfersSent =
+    personFilter === 'Todos'
+      ? 0
+      : currentMonthSummary.transfersSentByPerson?.[personFilter] || 0;
+
+  const transfersReceived =
+    personFilter === 'Todos'
+      ? 0
+      : currentMonthSummary.transfersReceivedAsExtraByPerson?.[personFilter] || 0;
+
+  const displayBalance =
+    personFilter === 'Todos'
+      ? currentMonthSummary.balance
+      : personIncome + transfersReceived - personExpense - transfersSent;
+
   return (
     <div className="space-y-6 pb-12">
       {/* Top Filter by Person & Quick Actions */}
@@ -205,18 +231,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-3">
             <h3 className="text-2xl font-black text-slate-900 dark:text-slate-100">
-              {formatCurrency(
-                personFilter === 'Todos'
-                  ? currentMonthSummary.totalIncome
-                  : currentMonthSummary.incomeByPerson[personFilter]
-              )}
+              {formatCurrency(personIncome)}
             </h3>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex flex-wrap gap-1">
-              <span>Recorrente: {formatCurrency(currentMonthSummary.recurringIncome)}</span>
-              {currentMonthSummary.extraordinaryIncome > 0 && (
-                <span className="text-purple-600 dark:text-purple-400 font-semibold">
-                  • +{formatCurrency(currentMonthSummary.extraordinaryIncome)} Extraordinário
-                </span>
+              {personFilter === 'Todos' ? (
+                <>
+                  <span>Recorrente: {formatCurrency(currentMonthSummary.recurringIncome)}</span>
+                  {currentMonthSummary.extraordinaryIncome > 0 && (
+                    <span className="text-purple-600 dark:text-purple-400 font-semibold">
+                      • +{formatCurrency(currentMonthSummary.extraordinaryIncome)} Extraordinário
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span>Receita direta atribuída a {personFilter}</span>
               )}
             </div>
           </div>
@@ -234,11 +262,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-3">
             <h3 className="text-2xl font-black text-slate-900 dark:text-slate-100">
-              {formatCurrency(
-                personFilter === 'Todos'
-                  ? currentMonthSummary.totalExpense
-                  : currentMonthSummary.expenseByPerson[personFilter]
-              )}
+              {formatCurrency(personExpense)}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               {monthTransactions.filter((t) => t.type === 'despesa').length} despesas no período
@@ -254,7 +278,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
             <div
               className={`p-2 rounded-xl ${
-                currentMonthSummary.balance >= 0
+                displayBalance >= 0
                   ? 'bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400'
                   : 'bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400'
               }`}
@@ -265,23 +289,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="mt-3">
             <h3
               className={`text-2xl font-black ${
-                currentMonthSummary.balance >= 0
+                displayBalance >= 0
                   ? 'text-blue-600 dark:text-blue-400'
                   : 'text-amber-600 dark:text-amber-400'
               }`}
             >
-              {formatCurrency(
-                personFilter === 'Todos'
-                  ? currentMonthSummary.balance
-                  : (currentMonthSummary.incomeByPerson[personFilter] || 0) +
-                    (currentMonthSummary.transfersReceivedAsExtraByPerson?.[personFilter] || 0) -
-                    (currentMonthSummary.expenseByPerson[personFilter] || 0) -
-                    (currentMonthSummary.transfersSentByPerson?.[personFilter] || 0)
-              )}
+              {formatCurrency(displayBalance)}
             </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Receitas menos despesas do mês
-            </p>
+            <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 space-y-0.5">
+              {personFilter === 'Todos' ? (
+                <p>Receitas ({formatCurrency(currentMonthSummary.totalIncome)}) - Despesas ({formatCurrency(currentMonthSummary.totalExpense)})</p>
+              ) : (
+                <>
+                  <p>
+                    Receitas ({formatCurrency(personIncome)}) - Despesas ({formatCurrency(personExpense)})
+                    {transfersSent > 0 && ` - Transf. enviadas (${formatCurrency(transfersSent)})`}
+                    {transfersReceived > 0 && ` + Transf. recebidas (${formatCurrency(transfersReceived)})`}
+                  </p>
+                  {transfersSent > 0 && (
+                    <p className="text-[10px] text-slate-400">
+                      Saldo operacional (sem transferências): <strong className={personIncome - personExpense >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500'}>{formatCurrency(personIncome - personExpense)}</strong>
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
