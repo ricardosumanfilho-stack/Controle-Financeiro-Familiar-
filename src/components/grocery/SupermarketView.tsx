@@ -122,8 +122,13 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
   const [tempGoals, setTempGoals] = useState({
     monthlyGoal: groceryMonthlyGoal || 1000,
     ricardoWeekly: groceryPlan.ricardoWeeklyPlanned || 150,
+    ricardoMonthly:
+      groceryPlan.ricardoTotalPlanned ||
+      (groceryPlan.ricardoWeeklyPlanned || 150) * (groceryPlan.totalWeeks || 4),
     ellenMonthly: groceryPlan.ellenMonthlyPlanned || 400,
-    ellenWeekly: groceryPlan.ellenWeeklyPlanned || 80,
+    ellenWeekly:
+      groceryPlan.ellenWeeklyPlanned ||
+      Number(((groceryPlan.ellenMonthlyPlanned || 400) / (groceryPlan.totalWeeks || 4)).toFixed(2)),
     ellenPlanningType: groceryPlan.ellenPlanningType || 'semanal',
     totalWeeks: groceryPlan.totalWeeks || 4,
   });
@@ -148,12 +153,15 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
 
   // Contribution and Month Total calculations
   const weeksCount = groceryPlan.totalWeeks || 4;
-  const ricardoPlanned = groceryPlan.mode === 'opcao_b' ? 600 : ((groceryPlan.ricardoWeeklyPlanned || 150) * weeksCount);
+  const ricardoPlanned =
+    groceryPlan.ricardoTotalPlanned !== undefined
+      ? groceryPlan.ricardoTotalPlanned
+      : (groceryPlan.ricardoWeeklyPlanned || 150) * weeksCount;
   const ellenPlanned = groceryPlan.ellenMonthlyPlanned || 400;
-  const totalPlanned = groceryMonthlyGoal || (ricardoPlanned + ellenPlanned);
+  const totalPlanned = groceryPlan.monthlyGoal || ricardoPlanned + ellenPlanned;
 
   const ricardoRealized = groceryPlan.ricardoWeeks.reduce(
-    (sum, w) => sum + (w.completed ? (w.actualAmount || w.plannedAmount || 150) : 0),
+    (sum, w) => sum + (w.completed ? (w.actualAmount || groceryPlan.ricardoWeeklyPlanned || w.plannedAmount || 150) : 0),
     0
   );
   const ellenRealized = groceryPlan.ellenCompleted
@@ -201,14 +209,15 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
 
     for (let w = 1; w <= totalWeeks; w++) {
       const planWeek = groceryPlan.ricardoWeeks?.find((rw) => rw.weekIndex === w);
-      const baseGoal = planWeek?.plannedAmount || baseWeekly;
+      const baseGoal = baseWeekly || planWeek?.plannedAmount || 150;
       const carryOverIn = runningCarryOver;
       const adjustedGoal = baseGoal + carryOverIn;
 
-      // Trips for this week (semanal or default)
+      // Trips for Ricardo / Família in this week (semanal or default)
       const tripsThisWeek = monthTrips.filter((t) => {
+        const isRicardoOrFamily = t.person !== 'Ellen';
         const isWeekly = t.tripType === 'semanal' || (!t.tripType && !t.isExtraordinary);
-        if (!isWeekly) return false;
+        if (!isWeekly || !isRicardoOrFamily) return false;
         const weekNum = t.weekNumber || getWeekNumberFromDate(t.date);
         return weekNum === w;
       });
@@ -256,7 +265,9 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
   // Dynamic Weekly Analysis with Rollover / Carry-over for Ellen
   const ellenWeeklyAnalysis = useMemo(() => {
     const totalWeeks = groceryPlan.totalWeeks || 4;
-    const baseWeekly = groceryPlan.ellenWeeklyPlanned || 80;
+    const baseWeekly =
+      groceryPlan.ellenWeeklyPlanned ||
+      Number(((groceryPlan.ellenMonthlyPlanned || 400) / totalWeeks).toFixed(2));
 
     type WeekReport = {
       weekIndex: number;
@@ -288,7 +299,7 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
 
     for (let w = 1; w <= totalWeeks; w++) {
       const planWeek = groceryPlan.ellenWeeks?.find((ew) => ew.weekIndex === w);
-      const baseGoal = planWeek?.plannedAmount || baseWeekly;
+      const baseGoal = baseWeekly || planWeek?.plannedAmount || 80;
       const carryOverIn = runningCarryOver;
       const adjustedGoal = baseGoal + carryOverIn;
 
@@ -902,11 +913,19 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
+                  const tw = groceryPlan.totalWeeks || 4;
+                  const rw = groceryPlan.ricardoWeeklyPlanned || 150;
+                  const rm = groceryPlan.ricardoTotalPlanned || rw * tw;
+                  const em = groceryPlan.ellenMonthlyPlanned || 400;
+                  const ew = groceryPlan.ellenWeeklyPlanned || Number((em / tw).toFixed(2));
                   setTempGoals({
-                    monthlyGoal: groceryMonthlyGoal || 1000,
-                    ricardoWeekly: groceryPlan.ricardoWeeklyPlanned || 150,
-                    ellenMonthly: groceryPlan.ellenMonthlyPlanned || 400,
-                    totalWeeks: groceryPlan.totalWeeks || 4,
+                    monthlyGoal: groceryPlan.monthlyGoal || rm + em,
+                    ricardoWeekly: rw,
+                    ricardoMonthly: rm,
+                    ellenMonthly: em,
+                    ellenWeekly: ew,
+                    ellenPlanningType: groceryPlan.ellenPlanningType || 'semanal',
+                    totalWeeks: tw,
                   });
                   setIsGoalModalOpen(true);
                 }}
@@ -939,6 +958,9 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                 {formatCurrency(totalPlanned)}
               </p>
               <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100 dark:border-slate-800">
+                <span>{p1}: {formatCurrency(ricardoPlanned)} | {p2}: {formatCurrency(ellenPlanned)}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5">
                 <span>Gasto real acumulado:</span>
                 <span className="font-semibold text-slate-900 dark:text-slate-100">
                   {formatCurrency(totalSpent)}
@@ -1221,7 +1243,67 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
           </div>
 
           {/* Abastecimento Mensal & Compras Extraordinárias */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Ricardo's Monthly & Weekly Planning Breakdown */}
+            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                    Planejamento de Supermercado ({p1})
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {groceryPlan.totalWeeks || 4} semanas x {formatCurrency(groceryPlan.ricardoWeeklyPlanned || 150)} = {formatCurrency(ricardoPlanned)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const tw = groceryPlan.totalWeeks || 4;
+                    const rw = groceryPlan.ricardoWeeklyPlanned || 150;
+                    const rm = groceryPlan.ricardoTotalPlanned || rw * tw;
+                    const em = groceryPlan.ellenMonthlyPlanned || 400;
+                    const ew = groceryPlan.ellenWeeklyPlanned || Number((em / tw).toFixed(2));
+                    setTempGoals({
+                      monthlyGoal: groceryPlan.monthlyGoal || rm + em,
+                      ricardoWeekly: rw,
+                      ricardoMonthly: rm,
+                      ellenMonthly: em,
+                      ellenWeekly: ew,
+                      ellenPlanningType: groceryPlan.ellenPlanningType || 'semanal',
+                      totalWeeks: tw,
+                    });
+                    setIsGoalModalOpen(true);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900/60 rounded-xl transition-colors"
+                >
+                  <Edit2 className="w-3 h-3" />
+                  <span>Editar Meta</span>
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                      Meta Mensal Total ({p1})
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Meta semanal base: {formatCurrency(groceryPlan.ricardoWeeklyPlanned || 150)}/sem
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-bold text-blue-700 dark:text-blue-300">
+                      {formatCurrency(ricardoPlanned)}
+                    </span>
+                    <span className="block text-[10px] text-slate-400">
+                      Gasto real {p1}: {formatCurrency(weeklyAnalysis.totalWeeklySpent)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Ellen's Monthly Abastecimento & Cesta Básica Breakdown */}
             <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
               <div className="flex items-center justify-between">
@@ -2678,8 +2760,161 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
             </div>
 
             <div className="space-y-4 text-xs">
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
+                {/* Número de Semanas */}
                 <div>
+                  <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
+                    Número de Semanas do Mês
+                  </label>
+                  <select
+                    value={tempGoals.totalWeeks}
+                    onChange={(e) => {
+                      const tw = Number(e.target.value) || 4;
+                      const rm = Number((tempGoals.ricardoWeekly * tw).toFixed(2));
+                      const ew = Number((tempGoals.ellenMonthly / tw).toFixed(2));
+                      setTempGoals({
+                        ...tempGoals,
+                        totalWeeks: tw,
+                        ricardoMonthly: rm,
+                        ellenWeekly: ew,
+                        monthlyGoal: Number((rm + tempGoals.ellenMonthly).toFixed(2)),
+                      });
+                    }}
+                    className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 font-semibold"
+                  >
+                    <option value={4}>4 Semanas (Padrão)</option>
+                    <option value={5}>5 Semanas (Meses longos)</option>
+                  </select>
+                </div>
+
+                {/* Metas do Ricardo (p1) */}
+                <div className="p-3 rounded-xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-blue-600" />
+                      Metas de {p1}
+                    </span>
+                    <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                      {tempGoals.totalWeeks} semanas
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
+                        Meta Semanal ({p1}) (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={tempGoals.ricardoWeekly}
+                        onChange={(e) => {
+                          const rw = Number(e.target.value) || 0;
+                          const rm = Number((rw * tempGoals.totalWeeks).toFixed(2));
+                          setTempGoals({
+                            ...tempGoals,
+                            ricardoWeekly: rw,
+                            ricardoMonthly: rm,
+                            monthlyGoal: Number((rm + tempGoals.ellenMonthly).toFixed(2)),
+                          });
+                        }}
+                        className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 text-slate-900 dark:text-slate-100 font-bold"
+                      />
+                      <span className="text-[10px] text-slate-500 block mt-0.5">
+                        Valor por semana
+                      </span>
+                    </div>
+                    <div>
+                      <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
+                        Meta Mensal ({p1}) (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={tempGoals.ricardoMonthly}
+                        onChange={(e) => {
+                          const rm = Number(e.target.value) || 0;
+                          const rw = Number((rm / (tempGoals.totalWeeks || 4)).toFixed(2));
+                          setTempGoals({
+                            ...tempGoals,
+                            ricardoMonthly: rm,
+                            ricardoWeekly: rw,
+                            monthlyGoal: Number((rm + tempGoals.ellenMonthly).toFixed(2)),
+                          });
+                        }}
+                        className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 text-slate-900 dark:text-slate-100 font-bold"
+                      />
+                      <span className="text-[10px] text-slate-500 block mt-0.5">
+                        Total de {p1} no mês
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Metas da Ellen (p2) */}
+                <div className="p-3 rounded-xl bg-pink-50/60 dark:bg-pink-950/30 border border-pink-200 dark:border-pink-900/50 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-pink-900 dark:text-pink-200 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-pink-600" />
+                      Metas de {p2}
+                    </span>
+                    <span className="text-[10px] font-semibold text-pink-600 dark:text-pink-400">
+                      {tempGoals.totalWeeks} semanas
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
+                        Meta Semanal ({p2}) (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={tempGoals.ellenWeekly}
+                        onChange={(e) => {
+                          const ew = Number(e.target.value) || 0;
+                          const em = Number((ew * tempGoals.totalWeeks).toFixed(2));
+                          setTempGoals({
+                            ...tempGoals,
+                            ellenWeekly: ew,
+                            ellenMonthly: em,
+                            monthlyGoal: Number((tempGoals.ricardoMonthly + em).toFixed(2)),
+                          });
+                        }}
+                        className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-pink-300 dark:border-pink-700 text-slate-900 dark:text-slate-100 font-bold"
+                      />
+                      <span className="text-[10px] text-slate-500 block mt-0.5">
+                        Valor por semana
+                      </span>
+                    </div>
+                    <div>
+                      <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
+                        Meta Mensal ({p2}) (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={tempGoals.ellenMonthly}
+                        onChange={(e) => {
+                          const em = Number(e.target.value) || 0;
+                          const ew = Number((em / (tempGoals.totalWeeks || 4)).toFixed(2));
+                          setTempGoals({
+                            ...tempGoals,
+                            ellenMonthly: em,
+                            ellenWeekly: ew,
+                            monthlyGoal: Number((tempGoals.ricardoMonthly + em).toFixed(2)),
+                          });
+                        }}
+                        className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-pink-300 dark:border-pink-700 text-slate-900 dark:text-slate-100 font-bold"
+                      />
+                      <span className="text-[10px] text-slate-500 block mt-0.5">
+                        Total de {p2} no mês
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Meta Total Mensal */}
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
                   <label className="block text-slate-700 dark:text-slate-200 font-bold mb-1">
                     Meta Total Mensal de Supermercado (R$)
                   </label>
@@ -2688,66 +2923,18 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                     step="0.01"
                     value={tempGoals.monthlyGoal}
                     onChange={(e) => setTempGoals({ ...tempGoals, monthlyGoal: Number(e.target.value) })}
-                    className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 font-bold text-sm"
+                    className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-emerald-400 dark:border-emerald-600 text-slate-900 dark:text-slate-100 font-bold text-sm"
                   />
                   <span className="text-[10px] text-slate-500 block mt-1">
-                    Teto máximo do orçamento do mês
+                    Soma automática: {p1} ({formatCurrency(tempGoals.ricardoMonthly)}) + {p2} ({formatCurrency(tempGoals.ellenMonthly)}) = {formatCurrency(tempGoals.ricardoMonthly + tempGoals.ellenMonthly)}
                   </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
-                  <div>
-                    <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
-                      Meta Semanal Base ({p1}) (R$)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={tempGoals.ricardoWeekly}
-                      onChange={(e) => setTempGoals({ ...tempGoals, ricardoWeekly: Number(e.target.value) })}
-                      className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 font-semibold"
-                    />
-                    <span className="text-[10px] text-slate-500 block mt-1">
-                      Valor por semana (ex: R$ 150)
-                    </span>
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
-                      Aporte Mensal ({p2}) (R$)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={tempGoals.ellenMonthly}
-                      onChange={(e) => setTempGoals({ ...tempGoals, ellenMonthly: Number(e.target.value) })}
-                      className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 font-semibold"
-                    />
-                    <span className="text-[10px] text-slate-500 block mt-1">
-                      Abastecimento mensal
-                    </span>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
-                  <label className="block text-slate-700 dark:text-slate-200 font-semibold mb-1">
-                    Número de Semanas do Mês
-                  </label>
-                  <select
-                    value={tempGoals.totalWeeks}
-                    onChange={(e) => setTempGoals({ ...tempGoals, totalWeeks: Number(e.target.value) })}
-                    className="w-full p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 font-semibold"
-                  >
-                    <option value={4}>4 Semanas (Padrão)</option>
-                    <option value={5}>5 Semanas (Meses longos)</option>
-                  </select>
                 </div>
               </div>
 
               <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 text-blue-900 dark:text-blue-200 text-xs">
                 <p className="font-semibold mb-1">💡 Como funciona a rolagem semanal:</p>
                 <p className="text-[11px] leading-relaxed text-blue-800/90 dark:text-blue-300/90">
-                  Se você gastar a mais ou a menos em uma semana (ex: gastou R$ 330 numa meta de R$ 150), o saldo restante acumula ou desconta automaticamente na meta da semana seguinte!
+                  Se você gastar a mais ou a menos em uma semana, o saldo restante acumula ou desconta automaticamente na meta da semana seguinte!
                 </p>
               </div>
 
@@ -2762,11 +2949,20 @@ export const SupermarketView: React.FC<SupermarketViewProps> = () => {
                 <button
                   type="button"
                   onClick={() => {
+                    const tw = Number(tempGoals.totalWeeks) || 4;
+                    const rw = Number(tempGoals.ricardoWeekly) || 0;
+                    const rm = Number(tempGoals.ricardoMonthly) || Number((rw * tw).toFixed(2));
+                    const em = Number(tempGoals.ellenMonthly) || 0;
+                    const ew = Number(tempGoals.ellenWeekly) || Number((em / tw).toFixed(2));
+                    const mg = Number(tempGoals.monthlyGoal) || Number((rm + em).toFixed(2));
+
                     updateGroceryPlanSettings({
-                      monthlyGoal: Number(tempGoals.monthlyGoal),
-                      ricardoWeeklyPlanned: Number(tempGoals.ricardoWeekly),
-                      ellenMonthlyPlanned: Number(tempGoals.ellenMonthly),
-                      totalWeeks: Number(tempGoals.totalWeeks),
+                      monthlyGoal: mg,
+                      ricardoWeeklyPlanned: rw,
+                      ricardoTotalPlanned: rm,
+                      ellenMonthlyPlanned: em,
+                      ellenWeeklyPlanned: ew,
+                      totalWeeks: tw,
                     });
                     setIsGoalModalOpen(false);
                   }}

@@ -93,14 +93,17 @@ export const BudgetPerPersonView: React.FC = () => {
     .reduce((sum, i) => sum + i.totalAmount, 0);
 
   // Grocery contributions
-  const ricardoGroceryPlanned = groceryPlan.mode === 'opcao_b' ? 600 : (groceryPlan.totalWeeks === 5 ? 750 : 600);
+  const ricardoGroceryPlanned =
+    groceryPlan.ricardoTotalPlanned !== undefined
+      ? groceryPlan.ricardoTotalPlanned
+      : (groceryPlan.ricardoWeeklyPlanned || 150) * (groceryPlan.totalWeeks || 4);
   const ricardoGroceryRealized = groceryPlan.ricardoWeeks.reduce(
-    (sum, w) => sum + (w.completed ? (w.actualAmount || w.plannedAmount || 150) : 0),
+    (sum, w) => sum + (w.completed ? (w.actualAmount || groceryPlan.ricardoWeeklyPlanned || w.plannedAmount || 150) : 0),
     0
   );
-  const ellenGroceryPlanned = 400;
+  const ellenGroceryPlanned = groceryPlan.ellenMonthlyPlanned || 400;
   const ellenGroceryRealized = groceryPlan.ellenCompleted
-    ? (groceryPlan.ellenActualAmount || 400)
+    ? (groceryPlan.ellenActualAmount || ellenGroceryPlanned)
     : 0;
 
   // Emergency Fund Contributions in the selected month
@@ -1209,7 +1212,7 @@ export const BudgetPerPersonView: React.FC = () => {
                     </span>
                     <strong className="text-slate-900 dark:text-slate-100">
                       {formatCurrency(ellenGroceryRealized)}
-                      <span className="text-[10px] text-slate-400 font-normal ml-1">/ R$ 400</span>
+                      <span className="text-[10px] text-slate-400 font-normal ml-1">/ {formatCurrency(ellenGroceryPlanned)}</span>
                     </strong>
                   </div>
 

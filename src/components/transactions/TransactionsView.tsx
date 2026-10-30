@@ -37,6 +37,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     deleteTransaction,
     deleteInstallmentPurchase,
     deleteInstallmentFromMonth,
+    deleteCardSubscription,
     toggleTransactionPaid,
     person1Name,
     person2Name,
@@ -55,6 +56,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   // Deletion modal state
   const [transactionToDelete, setTransactionToDelete] = useState<Transaction | null>(null);
   const [showInstallmentDeleteModal, setShowInstallmentDeleteModal] = useState(false);
+  const [showSubscriptionDeleteModal, setShowSubscriptionDeleteModal] = useState(false);
 
   // Extract available categories
   const availableCategories = useMemo(() => {
@@ -80,7 +82,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
 
   // Filtered transactions
   const filteredTransactions = useMemo(() => {
-    return transactions.filter((tx) => {
+    const sorted = transactions.filter((tx) => {
       // Month filter: Check date, competence month or purchase date
       if (!allMonthsFilter) {
         const matchesDate = tx.date && tx.date.startsWith(selectedMonth);
@@ -115,6 +117,13 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       }
       return true;
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    const seen = new Set<string>();
+    return sorted.filter((t) => {
+      if (seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
   }, [
     transactions,
     selectedMonth,
@@ -152,6 +161,8 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     setTransactionToDelete(tx);
     if (tx.installmentInfo?.purchaseId) {
       setShowInstallmentDeleteModal(true);
+    } else if (tx.subscriptionId || tx.isCardSubscription) {
+      setShowSubscriptionDeleteModal(true);
     }
   };
 
@@ -159,6 +170,19 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     if (transactionToDelete) {
       deleteTransaction(transactionToDelete.id);
       setTransactionToDelete(null);
+    }
+  };
+
+  const handleConfirmSubscriptionDelete = (mode: 'single' | 'all') => {
+    if (transactionToDelete) {
+      if (mode === 'all') {
+        const subId = transactionToDelete.subscriptionId || transactionToDelete.id;
+        deleteCardSubscription(subId);
+      } else {
+        deleteTransaction(transactionToDelete.id);
+      }
+      setTransactionToDelete(null);
+      setShowSubscriptionDeleteModal(false);
     }
   };
 
@@ -468,6 +492,12 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           </span>
                         )}
 
+                        {(tx.isCardSubscription || tx.subscriptionId) && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-200 font-semibold flex items-center gap-1">
+                            <RotateCcw className="w-3 h-3" /> Assinatura Cartão
+                          </span>
+                        )}
+
                         {/* Competence Month Badge - Prominently showing the month this expense/income belongs to */}
                         <span className="text-[11px] px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60 font-semibold flex items-center gap-1">
                           <Calendar className="w-3 h-3 text-blue-500" />
@@ -567,7 +597,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
       </div>
 
       {/* Confirmation Modal for Single / Standard Transactions */}
-      {transactionToDelete && !showInstallmentDeleteModal && (
+      {transactionToDelete && !showInstallmentDeleteModal && !showSubscriptionDeleteModal && (
         <ConfirmModal
           isOpen={Boolean(transactionToDelete)}
           onClose={() => setTransactionToDelete(null)}
@@ -578,6 +608,76 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
           cancelText="Cancelar"
           confirmVariant="danger"
         />
+      )}
+
+      {/* Modal for Subscription Transactions (Choose Single Month vs Whole Subscription) */}
+      {transactionToDelete && showSubscriptionDeleteModal && (
+        <Modal
+          isOpen={showSubscriptionDeleteModal}
+          onClose={() => {
+            setShowSubscriptionDeleteModal(false);
+            setTransactionToDelete(null);
+          }}
+          title="Excluir Assinatura de Cartão"
+          maxWidth="sm"
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3.5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+              <RotateCcw className="w-5 h-5 text-indigo-500 shrink-0 mt-0.5" />
+              <div className="text-xs text-slate-300 space-y-1">
+                <p className="font-semibold text-slate-200">
+                  {transactionToDelete.description} ({formatCurrency(transactionToDelete.amount)})
+                </p>
+                <p className="text-slate-400">
+                  Este lançamento é uma assinatura recorrente no cartão. Como deseja proceder com a exclusão?
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={() => handleConfirmSubscriptionDelete('single')}
+                className="w-full py-2.5 px-4 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-left transition-colors flex items-center justify-between"
+              >
+                <div>
+                  <div className="text-slate-200 font-semibold">Excluir somente deste mês</div>
+                  <div className="text-[11px] text-slate-400 font-normal">
+                    Remove este lançamento apenas do mês atual ({formatMonthYearBR(transactionToDelete.competenceMonth || transactionToDelete.date.slice(0, 7))})
+                  </div>
+                </div>
+                <Trash2 className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-2" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleConfirmSubscriptionDelete('all')}
+                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl text-left transition-colors flex items-center justify-between shadow-xs"
+              >
+                <div>
+                  <div className="text-white font-bold">Cancelar e Excluir Assinatura Completa</div>
+                  <div className="text-[11px] text-red-100 font-normal">
+                    Exclui a assinatura do cartão e todos os seus lançamentos em todos os meses
+                  </div>
+                </div>
+                <Trash2 className="w-4 h-4 text-white shrink-0 ml-2" />
+              </button>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSubscriptionDeleteModal(false);
+                  setTransactionToDelete(null);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {/* Modal for Installment Transactions (Choose Single Installment vs Whole Series) */}

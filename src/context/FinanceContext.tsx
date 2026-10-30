@@ -484,22 +484,35 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     safeStorageSet(STORAGE_KEYS.SELECTED_MONTH, month);
   }, []);
 
+const deduplicateTransactions = (list: Transaction[]): Transaction[] => {
+  const seenId = new Set<string>();
+  const seenSubMonth = new Set<string>();
+  const deduped: Transaction[] = [];
+
+  for (const t of list) {
+    if (!t || !t.id) continue;
+    if (seenId.has(t.id)) continue;
+
+    // Se for assinatura de cartão, impede duas transações para a mesma assinatura no mesmo mês de competência
+    if (t.subscriptionId) {
+      const compKey = `${t.subscriptionId}_${t.competenceMonth || (t.date ? t.date.slice(0, 7) : '')}`;
+      if (seenSubMonth.has(compKey)) continue;
+      seenSubMonth.add(compKey);
+    }
+
+    seenId.add(t.id);
+    deduped.push(t);
+  }
+  return deduped;
+};
+
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
     if (!saved) return INITIAL_TRANSACTIONS;
     try {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed)) {
-        const seen = new Set<string>();
-        return parsed.map((t, idx) => {
-          if (!t.id || seen.has(t.id)) {
-            const uniqueId = `tx-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`;
-            seen.add(uniqueId);
-            return { ...t, id: uniqueId };
-          }
-          seen.add(t.id);
-          return t;
-        });
+        return deduplicateTransactions(parsed);
       }
     } catch (e) {
       console.error(e);
@@ -773,7 +786,15 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
     return INITIAL_EMERGENCY_SETTINGS;
   });
 
-  const [groceryMonthlyGoal, setGroceryMonthlyGoal] = useState<number>(1000);
+  const groceryMonthlyGoal = useMemo<number>(() => {
+    const weeks = groceryPlan.totalWeeks || 4;
+    const ricardoTotal =
+      groceryPlan.ricardoTotalPlanned !== undefined
+        ? groceryPlan.ricardoTotalPlanned
+        : (groceryPlan.ricardoWeeklyPlanned || 150) * weeks;
+    const ellenTotal = groceryPlan.ellenMonthlyPlanned || 400;
+    return groceryPlan.monthlyGoal || ricardoTotal + ellenTotal;
+  }, [groceryPlan]);
 
   // Auto-save & cloud sync state
   const [saveStatus, setSaveStatus] = useState<AutoSaveStatus>('saved');
@@ -884,6 +905,101 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   useEffect(() => { closingChecklistsRef.current = closingChecklists; }, [closingChecklists]);
   useEffect(() => { dismissedAlertIdsRef.current = dismissedAlertIds; }, [dismissedAlertIds]);
   useEffect(() => { customCategoriesRef.current = customCategories; }, [customCategories]);
+
+  // Rastreio de meses de assinaturas que o usuário excluiu intencionalmente de forma avulsa
+  const suppressedSubscriptionMonthsRef = useRef<Set<string>>(new Set());
+
+  // Sincronização automática para garantir que todas as assinaturas de cartão ativas existam na lista de lançamentos
+  useEffect(() => {
+    if (!cardSubscriptions || cardSubscriptions.length === 0) return;
+
+    const activeSubs = cardSubscriptions.filter(
+      (s) => (s.status === undefined || s.status === 'active') && s.isActive !== false
+    );
+    if (activeSubs.length === 0) return;
+
+    const monthsToCheck = new Set<string>();
+    monthsToCheck.add(selectedMonth);
+    monthsToCheck.add('2026-08');
+    for (let i = -3; i <= 12; i++) {
+      monthsToCheck.add(addMonthsToKey(selectedMonth, i));
+    }
+
+    const missingTxs: Transaction[] = [];
+
+    activeSubs.forEach((sub) => {
+      const start = sub.startMonth || '2026-01';
+      const card = cards.find((c) => c.id === sub.cardId);
+      const dueDay = sub.billingDay
+        ? String(sub.billingDay).padStart(2, '0')
+        : card
+        ? String(card.dueDay).padStart(2, '0')
+        : '10';
+      const subTitle = sub.name || sub.description || 'Assinatura';
+
+      monthsToCheck.forEach((m) => {
+        if (m < start) return;
+        if (sub.endMonth && m > sub.endMonth) return;
+        if (suppressedSubscriptionMonthsRef.current.has(`${sub.id}_${m}`)) return;
+
+        const hasTx = transactionsRef.current.some(
+          (t) =>
+            (t.subscriptionId === sub.id || t.id === `tx-sub-${sub.id}-${m}`) &&
+            (t.competenceMonth === m || (t.date && t.date.startsWith(m)))
+        );
+
+        if (!hasTx) {
+          missingTxs.push({
+            id: `tx-sub-${sub.id}-${m}`,
+            description: `${subTitle} (Assinatura)`,
+            amount: sub.amount,
+            type: 'despesa',
+            category: sub.category || 'Assinaturas & Serviços',
+            person: sub.person,
+            date: `${m}-${dueDay}`,
+            competenceMonth: m,
+            paid: m < selectedMonth,
+            isRecurring: true,
+            paymentMethod: 'credito',
+            cardId: sub.cardId,
+            subscriptionId: sub.id,
+            isCardSubscription: true,
+            notes: sub.notes,
+            isDemo: sub.isDemo,
+          });
+        }
+      });
+    });
+
+    if (missingTxs.length > 0) {
+      setTransactions((prev) => {
+        const existingIds = new Set(prev.map((t) => t.id));
+        const existingSubMonths = new Set(
+          prev
+            .filter((t) => t.subscriptionId)
+            .map((t) => `${t.subscriptionId}_${t.competenceMonth || (t.date ? t.date.slice(0, 7) : '')}`)
+        );
+
+        const toAdd = missingTxs.filter((t) => {
+          if (existingIds.has(t.id)) return false;
+          if (t.subscriptionId) {
+            const compKey = `${t.subscriptionId}_${t.competenceMonth || (t.date ? t.date.slice(0, 7) : '')}`;
+            if (existingSubMonths.has(compKey)) return false;
+          }
+          return true;
+        });
+
+        if (toAdd.length === 0) return deduplicateTransactions(prev);
+
+        const next = deduplicateTransactions([...toAdd, ...prev]);
+        transactionsRef.current = next;
+        safeStorageSet(STORAGE_KEYS.TRANSACTIONS, next);
+        return next;
+      });
+      hasPendingLocalChangesRef.current = true;
+      setTimeout(() => flushPushToSupabase(), 40);
+    }
+  }, [cardSubscriptions, cards, selectedMonth]);
 
   // Synchronous flush before page unload or reload
   useEffect(() => {
@@ -1373,7 +1489,23 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
         cm: data.cofrinhoMovements?.map((m) => [m.id, m.cofrinhoId, m.amount, m.date, m.type, m.person]),
         ip: data.installmentPurchases?.map((i) => [i.id, i.description, i.totalAmount, i.remainingInstallments, i.currentInstallment, i.status, i.cardId]),
         gt: data.groceryTrips?.map((g) => [g.id, g.storeName, g.totalAmount, g.date, g.person, g.items?.length]),
-        gp: data.groceryPlansByMonth ? Object.keys(data.groceryPlansByMonth) : [],
+        gp: data.groceryPlansByMonth
+          ? Object.values(data.groceryPlansByMonth).map((p: any) => [
+              p.monthKey,
+              p.mode,
+              p.totalWeeks,
+              p.monthlyGoal,
+              p.ricardoWeeklyPlanned,
+              p.ricardoTotalPlanned,
+              p.ellenPlanningType,
+              p.ellenMonthlyPlanned,
+              p.ellenWeeklyPlanned,
+              p.ellenActualAmount,
+              p.ellenCompleted,
+              p.ricardoWeeks?.map((w: any) => [w.weekIndex, w.plannedAmount, w.actualAmount, w.completed]),
+              p.ellenWeeks?.map((w: any) => [w.weekIndex, w.plannedAmount, w.actualAmount, w.completed]),
+            ])
+          : [],
         sl: data.shoppingLists?.map((s) => [s.id, s.name, s.items?.length]),
         si: data.stockItems?.map((s) => [s.id, s.product, s.quantity, s.status]),
         cb: data.cestaBasicaRecords?.map((c) => [c.id, c.date, c.items?.length]),
@@ -2040,6 +2172,12 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
       return;
     }
 
+    // Se for um lançamento avulso de assinatura de cartão excluído, registrar para não recriar automaticamente
+    if (tx.subscriptionId) {
+      const compMonth = tx.competenceMonth || (tx.date ? tx.date.slice(0, 7) : selectedMonth);
+      suppressedSubscriptionMonthsRef.current.add(`${tx.subscriptionId}_${compMonth}`);
+    }
+
     // 2. Se for compra de supermercado vinculada, excluir registro de supermercado
     if (tx.groceryTripId) {
       deleteItemFromSupabase('grocery_trips', tx.groceryTripId);
@@ -2467,34 +2605,121 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Card Subscriptions CRUD
   const addCardSubscription = (subscription: Omit<CardSubscription, 'id'>) => {
     const subId = 'sub-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    const startM = subscription.startMonth || selectedMonth;
+    const card = cards.find((c) => c.id === subscription.cardId);
+    const dueDay = subscription.billingDay
+      ? String(subscription.billingDay).padStart(2, '0')
+      : card
+      ? String(card.dueDay).padStart(2, '0')
+      : '10';
+    const subTitle = subscription.name || subscription.description || 'Assinatura';
+
     const newSub: CardSubscription = {
       ...subscription,
+      startMonth: startM,
       id: subId,
     };
-    setCardSubscriptions((prev) => [newSub, ...prev]);
+
+    const newTxs: Transaction[] = [];
+    const monthsAhead = 24;
+    for (let i = 0; i < monthsAhead; i++) {
+      const monthForSub = addMonthsToKey(startM, i);
+      if (subscription.endMonth && monthForSub > subscription.endMonth) break;
+      const dateStr = `${monthForSub}-${dueDay}`;
+
+      newTxs.push({
+        id: `tx-sub-${subId}-${monthForSub}`,
+        description: `${subTitle} (Assinatura)`,
+        amount: subscription.amount,
+        type: 'despesa',
+        category: subscription.category || 'Assinaturas & Serviços',
+        person: subscription.person,
+        date: dateStr,
+        competenceMonth: monthForSub,
+        paid: false,
+        isRecurring: true,
+        paymentMethod: 'credito',
+        cardId: subscription.cardId,
+        subscriptionId: subId,
+        isCardSubscription: true,
+        notes: subscription.notes,
+        isDemo: subscription.isDemo,
+      });
+    }
+
+    setCardSubscriptions((prev) => {
+      const next = [newSub, ...prev];
+      cardSubscriptionsRef.current = next;
+      safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, next);
+      return next;
+    });
+
+    setTransactions((prev) => {
+      const next = [...newTxs, ...prev];
+      transactionsRef.current = next;
+      safeStorageSet(STORAGE_KEYS.TRANSACTIONS, next);
+      return next;
+    });
+
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const updateCardSubscription = (id: string, updated: Partial<CardSubscription>) => {
-    setCardSubscriptions((prev) =>
-      prev.map((sub) => (sub.id === id ? { ...sub, ...updated, isDemo: false } : sub))
-    );
+    setCardSubscriptions((prev) => {
+      const next = prev.map((sub) => (sub.id === id ? { ...sub, ...updated, isDemo: false } : sub));
+      cardSubscriptionsRef.current = next;
+      safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, next);
+      return next;
+    });
+
+    // Sincronizar todos os lançamentos gerados nos meses correspondentes com o novo valor/dados
+    setTransactions((prev) => {
+      const next = prev.map((t) => {
+        if (t.subscriptionId === id || t.id.startsWith(`tx-sub-${id}-`)) {
+          const newTitle = updated.name || updated.description;
+          const newDesc = newTitle !== undefined ? `${newTitle} (Assinatura)` : t.description;
+          return {
+            ...t,
+            description: newDesc,
+            amount: updated.amount !== undefined ? updated.amount : t.amount,
+            category: updated.category !== undefined ? updated.category : t.category,
+            person: updated.person !== undefined ? updated.person : t.person,
+            cardId: updated.cardId !== undefined ? updated.cardId : t.cardId,
+            notes: updated.notes !== undefined ? updated.notes : t.notes,
+            isDemo: false,
+          };
+        }
+        return t;
+      });
+      transactionsRef.current = next;
+      safeStorageSet(STORAGE_KEYS.TRANSACTIONS, next);
+      return next;
+    });
+
+    hasPendingLocalChangesRef.current = true;
+    setTimeout(() => flushPushToSupabase(), 40);
   };
 
   const deleteCardSubscription = (id: string) => {
     deleteItemFromSupabase('card_subscriptions', id);
-    setCardSubscriptions((prev) => prev.filter((sub) => sub.id !== id));
-    cardSubscriptionsRef.current = cardSubscriptionsRef.current.filter((sub) => sub.id !== id);
+    setCardSubscriptions((prev) => {
+      const next = prev.filter((sub) => sub.id !== id);
+      cardSubscriptionsRef.current = next;
+      safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, next);
+      return next;
+    });
+
     const relatedTxs = transactionsRef.current.filter((t) => t.subscriptionId === id || t.id === id || t.id.includes(id));
     if (relatedTxs.length > 0) {
       deleteItemFromSupabase('transactions', relatedTxs.map((t) => t.id));
     }
-    setTransactions((prev) =>
-      prev.filter((t) => t.subscriptionId !== id && t.id !== id && !t.id.includes(id))
-    );
-    transactionsRef.current = transactionsRef.current.filter((t) => t.subscriptionId !== id && t.id !== id && !t.id.includes(id));
-
-    safeStorageSet(STORAGE_KEYS.CARD_SUBSCRIPTIONS, cardSubscriptionsRef.current);
-    safeStorageSet(STORAGE_KEYS.TRANSACTIONS, transactionsRef.current);
+    setTransactions((prev) => {
+      const next = prev.filter((t) => t.subscriptionId !== id && t.id !== id && !t.id.includes(id));
+      transactionsRef.current = next;
+      safeStorageSet(STORAGE_KEYS.TRANSACTIONS, next);
+      return next;
+    });
 
     hasPendingLocalChangesRef.current = true;
     setTimeout(() => flushPushToSupabase(), 40);
@@ -3044,86 +3269,218 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const toggleRicardoWeek = (weekIndex: number) => {
-    setGroceryPlan((prev) => ({
-      ...prev,
-      ricardoWeeks: prev.ricardoWeeks.map((w) => {
-        if (w.weekIndex === weekIndex) {
-          const nextCompleted = !w.completed;
-          return {
-            ...w,
-            completed: nextCompleted,
-            actualAmount: nextCompleted ? (w.actualAmount || w.plannedAmount || 150) : 0,
-          };
-        }
-        return w;
-      }),
-    }));
+    setGroceryPlan((prev) => {
+      const updated = {
+        ...prev,
+        ricardoWeeks: prev.ricardoWeeks.map((w) => {
+          if (w.weekIndex === weekIndex) {
+            const nextCompleted = !w.completed;
+            const planned = prev.ricardoWeeklyPlanned || w.plannedAmount || 150;
+            return {
+              ...w,
+              plannedAmount: planned,
+              completed: nextCompleted,
+              actualAmount: nextCompleted ? (w.actualAmount || planned) : 0,
+            };
+          }
+          return w;
+        }),
+      };
+      groceryPlanRef.current = updated;
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, updated);
+      return updated;
+    });
   };
 
   const updateRicardoWeekAmount = (weekIndex: number, amount: number) => {
-    setGroceryPlan((prev) => ({
-      ...prev,
-      ricardoWeeks: prev.ricardoWeeks.map((w) =>
-        w.weekIndex === weekIndex
-          ? { ...w, actualAmount: amount, completed: amount > 0 }
-          : w
-      ),
-    }));
+    setGroceryPlan((prev) => {
+      const updated = {
+        ...prev,
+        ricardoWeeks: prev.ricardoWeeks.map((w) =>
+          w.weekIndex === weekIndex
+            ? { ...w, actualAmount: amount, completed: amount > 0 }
+            : w
+        ),
+      };
+      groceryPlanRef.current = updated;
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, updated);
+      return updated;
+    });
   };
 
   const toggleEllenWeek = (weekIndex: number) => {
-    setGroceryPlan((prev) => ({
-      ...prev,
-      ellenWeeks: (prev.ellenWeeks || []).map((w) => {
-        if (w.weekIndex === weekIndex) {
-          const nextCompleted = !w.completed;
-          return {
-            ...w,
-            completed: nextCompleted,
-            actualAmount: nextCompleted ? (w.actualAmount || w.plannedAmount || 80) : 0,
-          };
-        }
-        return w;
-      }),
-    }));
+    setGroceryPlan((prev) => {
+      const updated = {
+        ...prev,
+        ellenWeeks: (prev.ellenWeeks || []).map((w) => {
+          if (w.weekIndex === weekIndex) {
+            const nextCompleted = !w.completed;
+            const planned = prev.ellenWeeklyPlanned || w.plannedAmount || 80;
+            return {
+              ...w,
+              plannedAmount: planned,
+              completed: nextCompleted,
+              actualAmount: nextCompleted ? (w.actualAmount || planned) : 0,
+            };
+          }
+          return w;
+        }),
+      };
+      groceryPlanRef.current = updated;
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, updated);
+      return updated;
+    });
   };
 
   const updateEllenWeekAmount = (weekIndex: number, amount: number) => {
-    setGroceryPlan((prev) => ({
-      ...prev,
-      ellenWeeks: (prev.ellenWeeks || []).map((w) =>
-        w.weekIndex === weekIndex
-          ? { ...w, actualAmount: amount, completed: amount > 0 }
-          : w
-      ),
-    }));
+    setGroceryPlan((prev) => {
+      const updated = {
+        ...prev,
+        ellenWeeks: (prev.ellenWeeks || []).map((w) =>
+          w.weekIndex === weekIndex
+            ? { ...w, actualAmount: amount, completed: amount > 0 }
+            : w
+        ),
+      };
+      groceryPlanRef.current = updated;
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, updated);
+      return updated;
+    });
   };
 
   const toggleEllenGrocery = () => {
     setGroceryPlan((prev) => {
       const nextCompleted = !prev.ellenCompleted;
-      return {
+      const updated = {
         ...prev,
         ellenCompleted: nextCompleted,
-        ellenActualAmount: nextCompleted ? (prev.ellenActualAmount || 400) : 0,
+        ellenActualAmount: nextCompleted ? (prev.ellenActualAmount || prev.ellenMonthlyPlanned || 400) : 0,
       };
+      groceryPlanRef.current = updated;
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, updated);
+      return updated;
     });
   };
 
   const updateEllenGroceryAmount = (amount: number) => {
-    setGroceryPlan((prev) => ({
-      ...prev,
-      ellenActualAmount: amount,
-      ellenCompleted: amount > 0,
-    }));
+    setGroceryPlan((prev) => {
+      const updated = {
+        ...prev,
+        ellenActualAmount: amount,
+        ellenCompleted: amount > 0,
+      };
+      groceryPlanRef.current = updated;
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, updated);
+      return updated;
+    });
   };
 
   const updateGroceryPlanSettings = (settings: Partial<GroceryMonthPlan>) => {
     setGroceryPlan((prev) => {
-      const updated = { ...prev, ...settings };
-      localStorage.setItem(STORAGE_KEYS.GROCERY_PLAN, JSON.stringify(updated));
+      const nextTotalWeeks = Number(settings.totalWeeks ?? prev.totalWeeks ?? 4) || 4;
+
+      const nextRicardoWeekly =
+        settings.ricardoWeeklyPlanned !== undefined
+          ? Number(settings.ricardoWeeklyPlanned)
+          : settings.ricardoTotalPlanned !== undefined
+          ? Number((Number(settings.ricardoTotalPlanned) / nextTotalWeeks).toFixed(2))
+          : Number(prev.ricardoWeeklyPlanned ?? 150);
+
+      const nextRicardoTotal =
+        settings.ricardoTotalPlanned !== undefined
+          ? Number(settings.ricardoTotalPlanned)
+          : Number((nextRicardoWeekly * nextTotalWeeks).toFixed(2));
+
+      const nextEllenMonthly =
+        settings.ellenMonthlyPlanned !== undefined
+          ? Number(settings.ellenMonthlyPlanned)
+          : settings.ellenWeeklyPlanned !== undefined
+          ? Number((Number(settings.ellenWeeklyPlanned) * nextTotalWeeks).toFixed(2))
+          : Number(prev.ellenMonthlyPlanned ?? 400);
+
+      const nextEllenWeekly =
+        settings.ellenWeeklyPlanned !== undefined
+          ? Number(settings.ellenWeeklyPlanned)
+          : settings.ellenMonthlyPlanned !== undefined
+          ? Number((Number(settings.ellenMonthlyPlanned) / nextTotalWeeks).toFixed(2))
+          : Number(prev.ellenWeeklyPlanned ?? Number((nextEllenMonthly / nextTotalWeeks).toFixed(2)));
+
+      const nextMonthlyGoal =
+        settings.monthlyGoal !== undefined && settings.monthlyGoal > 0
+          ? Number(settings.monthlyGoal)
+          : Number((nextRicardoTotal + nextEllenMonthly).toFixed(2));
+
+      const updatedRicardoWeeks = Array.from({ length: nextTotalWeeks }, (_, idx) => {
+        const wIndex = idx + 1;
+        const existingWeek = (prev.ricardoWeeks || []).find((w) => w.weekIndex === wIndex);
+        return {
+          weekIndex: wIndex,
+          weekLabel: existingWeek?.weekLabel || `Semana ${wIndex}`,
+          dateRangeLabel: existingWeek?.dateRangeLabel,
+          plannedAmount: nextRicardoWeekly,
+          actualAmount: existingWeek
+            ? existingWeek.completed
+              ? nextRicardoWeekly
+              : existingWeek.actualAmount
+            : 0,
+          completed: existingWeek ? existingWeek.completed : false,
+          paid: existingWeek?.paid,
+        };
+      });
+
+      const updatedEllenWeeks = Array.from({ length: nextTotalWeeks }, (_, idx) => {
+        const wIndex = idx + 1;
+        const existingWeek = (prev.ellenWeeks || []).find((w) => w.weekIndex === wIndex);
+        return {
+          weekIndex: wIndex,
+          weekLabel: existingWeek?.weekLabel || `Semana ${wIndex}`,
+          dateRangeLabel: existingWeek?.dateRangeLabel,
+          plannedAmount: nextEllenWeekly,
+          actualAmount: existingWeek
+            ? existingWeek.completed
+              ? nextEllenWeekly
+              : existingWeek.actualAmount
+            : 0,
+          completed: existingWeek ? existingWeek.completed : false,
+          paid: existingWeek?.paid,
+        };
+      });
+
+      const updated: GroceryMonthPlan = {
+        ...prev,
+        ...settings,
+        monthKey: prev.monthKey || selectedMonth,
+        totalWeeks: nextTotalWeeks,
+        monthlyGoal: nextMonthlyGoal,
+        ricardoWeeklyPlanned: nextRicardoWeekly,
+        ricardoTotalPlanned: nextRicardoTotal,
+        ricardoWeeks: settings.ricardoWeeks || updatedRicardoWeeks,
+        ellenMonthlyPlanned: nextEllenMonthly,
+        ellenWeeklyPlanned: nextEllenWeekly,
+        ellenActualAmount: prev.ellenCompleted ? nextEllenMonthly : prev.ellenActualAmount,
+        ellenWeeks: settings.ellenWeeks || updatedEllenWeeks,
+      };
+
+      groceryPlanRef.current = updated;
+      safeStorageSet(STORAGE_KEYS.GROCERY_PLAN, updated);
+
+      const mKey = updated.monthKey || selectedMonth;
+      setGroceryPlansByMonth((prevMap) => {
+        const nextMap = { ...prevMap, [mKey]: updated };
+        groceryPlansByMonthRef.current = nextMap;
+        safeStorageSet(STORAGE_KEYS.GROCERY_PLANS_BY_MONTH, nextMap);
+        return nextMap;
+      });
+
+      hasPendingLocalChangesRef.current = true;
+      setTimeout(() => flushPushToSupabase(), 40);
+
       return updated;
     });
+  };
+
+  const setGroceryMonthlyGoal = (goal: number) => {
+    updateGroceryPlanSettings({ monthlyGoal: goal });
   };
 
   // Shopping Lists CRUD & Conversions
@@ -3676,18 +4033,21 @@ export const FinanceProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     // Supermercado
     const weeksCount = groceryPlan.totalWeeks || getWeeksInMonth(selectedMonth);
-    const ricardoPlanned = groceryPlan.mode === 'opcao_b'
-      ? 600
-      : (weeksCount === 5 ? 750 : 600);
-    const ellenPlanned = 400;
-    const groceryPlanned = ricardoPlanned + ellenPlanned;
+    const ricardoPlanned =
+      groceryPlan.ricardoTotalPlanned !== undefined
+        ? groceryPlan.ricardoTotalPlanned
+        : groceryPlan.mode === 'opcao_b' && !groceryPlan.ricardoWeeklyPlanned
+        ? 600
+        : (groceryPlan.ricardoWeeklyPlanned || 150) * weeksCount;
+    const ellenPlanned = groceryPlan.ellenMonthlyPlanned || 400;
+    const groceryPlanned = groceryPlan.monthlyGoal || ricardoPlanned + ellenPlanned;
 
     const ricardoTransferred = groceryPlan.ricardoWeeks.reduce(
-      (sum, w) => sum + (w.completed ? (w.actualAmount || w.plannedAmount || 150) : 0),
+      (sum, w) => sum + (w.completed ? (w.actualAmount || groceryPlan.ricardoWeeklyPlanned || w.plannedAmount || 150) : 0),
       0
     );
     const ellenTransferred = groceryPlan.ellenCompleted
-      ? (groceryPlan.ellenActualAmount || 400)
+      ? (groceryPlan.ellenActualAmount || ellenPlanned)
       : 0;
     const groceryTransferred = ricardoTransferred + ellenTransferred;
 

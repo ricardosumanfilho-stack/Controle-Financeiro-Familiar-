@@ -69,9 +69,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const cardInvoices = getCardInvoicesForMonth(selectedMonth);
 
   // Month transactions filtered by person
-  const monthTransactions = transactions
-    .filter((t) => t.date.startsWith(selectedMonth))
-    .filter((t) => (personFilter === 'Todos' ? true : t.person === personFilter));
+  const monthTransactions = React.useMemo(() => {
+    const list = transactions
+      .filter((t) => (t.competenceMonth === selectedMonth || t.date.startsWith(selectedMonth)))
+      .filter((t) => (personFilter === 'Todos' ? true : t.person === personFilter));
+
+    const seen = new Set<string>();
+    return list.filter((t) => {
+      if (seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
+  }, [transactions, selectedMonth, personFilter]);
 
   const recentTransactions = monthTransactions.slice(0, 6);
 
